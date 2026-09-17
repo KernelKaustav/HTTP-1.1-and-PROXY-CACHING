@@ -25,8 +25,8 @@ Java (java.net sockets, java.util.concurrent thread polls, java.nio/Selector for
 |--------------|------------------------------------------------|
 | Aniket Ghosh | TCP Server Core (parsing, status codes, buffering) |
 | Ahan Bhattacharjee | Concurrency models (thread pool + event loop) |
-| TBD          | Static file serving + persistent connections  |
-| TBD          | Forward proxy + LRU cache                     |
+| Puskar Das | Static file serving + persistent connections  |
+| Kaustav Ghosh | Forward proxy + LRU cache                     |
 
 ## Repository layout
 
