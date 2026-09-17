@@ -8,7 +8,11 @@ core protocol implementation. This file logs every use, per the
 
 | Date | Who | What was asked of the AI tool | What was used / rejected |
 |------|-----|-------------------------------|---------------------------|
-| 17 Sep | Aniket Ghosh | Generate the Week-1 repo skeleton: folder structure, `.gitignore`, `README.md` skeleton, this file, and a starting point for the shared `RequestHandler` interface + a first pass at TCP accept-loop and request-line/header parsing boilerplate | Used the folder structure, `.gitignore`, `README.md` and `RequestHandler`/`HttpRequest`/`HttpResponse` interface shapes as given. The parsing and server-loop code was used as a **starting skeleton with TODOs** — logic still needs to be extended (body handling, status codes, error paths) and every line needs to be understood before the individual viva. |
+| 17 Sep | Aniket Ghosh | Generate the Week-1 repo skeleton: folder structure, `.gitignore`, `README.md` skeleton, this file, and a starting point for the shared `RequestHandler` interface + a first pass at TCP accept-loop and request-line/header parsing boilerplate | Used the folder structure, `.gitignore`, `README.md` and `RequestHandler`/`HttpRequest`/`HttpResponse` interface shapes as given. The parsing and server-loop code was used as a **starting skeleton with TODOs** — logic still needs to be extended (body handling, status codes, error paths) and every line needs to be understood before the individual viva. 
+|18 Sep | Ahan Bhattacharjee | For: Explained the thread-pool concept (fixed pool vs thread-per-request)
+  and generated an initial draft of `ConnectionTask.java` and
+  `EchoRequestHandler.java`. |  What I did: Rewrote both in my own style, renamed variables, and added my
+  own comments after understanding the try-with-resources pattern.
 
 ## Notes for teammates
 
