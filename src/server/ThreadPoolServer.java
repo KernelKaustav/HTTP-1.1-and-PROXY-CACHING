@@ -44,7 +44,7 @@ public class ThreadPoolServer{
     }
     public String poolStats(){
         if (pool == null) return "pool not started";
-        return String.format("active=%d, queued=%d, completed=%d", pool.getActiveCount(),pool.getQueue().size(), pool.getCompletedTaskCount(), pool.getPoolSize());
+        return String.format("active=%d, queued=%d, completed=%d, poolSize=%d", pool.getActiveCount(),pool.getQueue().size(), pool.getCompletedTaskCount(), pool.getPoolSize());
     }
     public static void main(String[] args) throws IOException {
         int port = 8080;
@@ -60,7 +60,7 @@ public class ThreadPoolServer{
             System.exit(1);
         }
         ThreadPoolServer server = new ThreadPoolServer(port, poolSize,new EchoRequestHandler());
-        System.out.println("Starting threadPool server on port" + port + "with pool size" + poolSize);
+        System.out.println("Starting threadPool server on port " + port + " with pool size " + poolSize);
         server.start();
     }
 }
