@@ -49,7 +49,18 @@ public class ThreadPoolServer{
     public static void main(String[] args) throws IOException {
         int port = 8080;
         int poolSize = 50;
+        if(args.length >= 1) {
+            port = Integer.parseInt(args[0]);
+        }
+        if (args.length >= 2) {
+            poolSize = Integer.parseInt(args[1]);
+        }
+        if (poolSize <= 0){
+            System.err.println("Pool size must be a positive integer ");
+            System.exit(1);
+        }
         ThreadPoolServer server = new ThreadPoolServer(port, poolSize,new EchoRequestHandler());
+        System.out.println("Starting threadPool server on port" + port + "with pool size" + poolSize);
         server.start();
     }
 }
