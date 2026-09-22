@@ -59,7 +59,7 @@ public class ThreadPoolServer{
             System.err.println("Pool size must be a positive integer ");
             System.exit(1);
         }
-        ThreadPoolServer server = new ThreadPoolServer(port, poolSize,new EchoRequestHandler());
+        ThreadPoolServer server = new ThreadPoolServer(port, poolSize, new EchoRequestHandler());
         System.out.println("Starting threadPool server on port " + port + " with pool size " + poolSize);
         server.start();
     }
