@@ -1,21 +1,13 @@
 package server;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 public class EchoRequestHandler implements RequestHandler{
-    public void handle(Socket clientSocket) throws IOException{
-        BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
-        String line;
-        while ((line = in.readLine()) != null && !line.isEmpty()){
-            //draining headers
-        }
-        String body = "Hello from thread-pool server\n";
-        String response = "HTTP/1.1 200 OK\r\n"  + "Content-Type: text/plain\r\n" + "Content-Length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n" + "Connection: close\r\n" + "\r\n" + body;
-OutputStream out = clientSocket.getOutputStream();
-out.write(response.getBytes(StandardCharsets.UTF_8));
-out.flush();
+    @Override
+    public HttpResponse handle(HttpRequest request){
+        String body = "Hello from the thread-pool server\n";
+        return new HttpResponse()
+        .status(200)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .header("Connection", request.isKeepAlive() ? "keep-alive" : "close")
+        .body(body); // Content-Length is set automatically inside body()
     }
 }
