@@ -77,6 +77,7 @@ public final class HttpResponse {
             case 431: return "Request Header Fields Too Large";
             case 500: return "Internal Server Error";
             case 505: return "HTTP Version Not Supported";
+            case 403: return  "Forbidden";
             default:  return "Unknown";
         }
     }
