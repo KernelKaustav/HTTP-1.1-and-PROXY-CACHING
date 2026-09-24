@@ -48,11 +48,11 @@ Java (java.net sockets, java.util.concurrent thread polls, java.nio/Selector for
 - [x] Shared `RequestHandler` interface + request/response model
 - [x] TCP accept loop skeleton
 - [x] Request-line and header parsing (begun)
-- [ ] GET / HEAD handling with correct status codes
+- [x] GET / HEAD handling with correct status codes
 - [ ] Persistent connections (keep-alive) + Content-Length handling
 - [ ] Chunked transfer encoding
-- [ ] Static file serving (MIME types, directory-traversal protection)
-- [ ] Thread pool concurrency model
+- [x] Static file serving (MIME types, directory-traversal protection)
+- [x] Thread pool concurrency model
 - [ ] Event loop concurrency model
 - [ ] Forward proxy + LRU cache (Cache-Control, ETag, If-Modified-Since)
 - [ ] Benchmarks: req/sec and latency percentiles vs. concurrency
