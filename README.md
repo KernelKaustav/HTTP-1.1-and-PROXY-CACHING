@@ -23,10 +23,10 @@ Java (java.net sockets, java.util.concurrent thread polls, java.nio/Selector for
 
 | Name         | Component owned                               |
 |--------------|------------------------------------------------|
-| Aniket Ghosh | TCP Server Core (parsing, status codes, buffering) |
-| Ahan Bhattacharjee | Concurrency models (thread pool + event loop) |
-| Puskar Das | Static file serving + persistent connections  |
-| Kaustav Ghosh | Forward proxy + LRU cache                     |
+| Ahan Bhattacharjee | Thread-pool concurrency model, benchmark harness |
+| Kaustav Ghosh | Static file serving, forward proxy, LRU cache |
+| Puskar Das | Event-loop concurrency model, keep-alive, chunked encoding  |
+| Aniket Ghosh | TCP server core: HTTP parsing, status codes, buffering |
 
 ## Repository layout
 
