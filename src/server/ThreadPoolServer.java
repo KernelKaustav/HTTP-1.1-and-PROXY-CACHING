@@ -21,6 +21,7 @@ public class ThreadPoolServer{
         serverSocket = new ServerSocket(port);
         pool = new ThreadPoolExecutor(poolSize,poolSize, 0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), new ThreadPoolExecutor.CallerRunsPolicy());
         running = true;
+        startStatsMonitor(10);
         System.out.println("[ThreadPoolServer] listening on port " + port + " | pool size = " + poolSize);
         while (running){
             try{
@@ -38,13 +39,42 @@ public class ThreadPoolServer{
         if (serverSocket != null && !serverSocket.isClosed()){
             serverSocket.close();
         }
-        if(pool != null){
-            pool.shutdown();
+        if(pool == null){
+            return;
+        }
+        pool.shutdown();
+        try{
+            System.out.println("[ThreadPoolServer] waiting for in-flight request to finish.");
+            if(!pool.awaitTermination(5,TimeUnit.SECONDS)){
+                System.err.println("[ThreadPoolServer] pool did not terminate in time, forcing shutdown");
+                pool.shutdown();
+            } else {
+                System.out.println("[ThreadPoolServer] shutdown complete, all request finished.");
+            }
+
+        } catch (InterruptedException e){
+pool.shutdown();
+Thread.currentThread().interrupt();
         }
     }
     public String poolStats(){
         if (pool == null) return "pool not started";
         return String.format("active=%d, queued=%d, completed=%d, poolSize=%d", pool.getActiveCount(),pool.getQueue().size(), pool.getCompletedTaskCount(), pool.getPoolSize());
+    }
+    public void startStatsMonitor(int intervalSeconds){
+        Thread monitor = new Thread(()-> {
+            while(running){
+                System.out.println("[stats] "+ poolStats());
+                try{
+                    Thread.sleep(intervalSeconds*1000L);
+                } catch(InterruptedException e){
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+        monitor.setDaemon(true); // daemon: JVM can exit even if this thread is still running
+        monitor.start();
     }
     public static void main(String[] args) throws IOException {
         int port = 8080;
@@ -60,6 +90,14 @@ public class ThreadPoolServer{
             System.exit(1);
         }
         ThreadPoolServer server = new ThreadPoolServer(port, poolSize, new EchoRequestHandler());
+        Runtime.getRuntime().addShutdownHook(new Thread(()->{
+            System.out.println("\n[ThreadPoolServer] shutdown signal received, stopping gracefully.");
+            try{
+                server.stop();
+            } catch(IOException e){
+                System.err.println("[ThreadPoolSize] error during shutdown: "+ e.getMessage());
+            }
+        }));
         System.out.println("Starting threadPool server on port " + port + " with pool size " + poolSize);
         server.start();
     }
