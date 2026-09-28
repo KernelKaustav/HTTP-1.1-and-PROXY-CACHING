@@ -1,7 +1,6 @@
 package server;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.CancelledKeyException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -17,7 +16,6 @@ public class EventLoopServer {
     private ServerSocketChannel serverChannel;
     private volatile boolean running;
     private long acceptedCount = 0; 
-
     public EventLoopServer(int port) {
         this.port = port;
     }
@@ -57,7 +55,7 @@ public class EventLoopServer {
             if (key.isAcceptable()) {
                 handleAccept(key);
             } else if (key.isReadable()) {
-                handleReadPlaceholder(key);
+                handleRead(key);
             } else if (key.isWritable()) {
                 System.out.println("[EventLoopServer] OP_WRITE ready - handler lands 02 Oct");
             }
@@ -74,7 +72,7 @@ public class EventLoopServer {
             try {
                 client.configureBlocking(false);
                 client.setOption(java.net.StandardSocketOptions.TCP_NODELAY, true);
-                client.register(selector, SelectionKey.OP_READ);
+                client.register(selector, SelectionKey.OP_READ, new ConnectionState(client));
                 acceptedCount++;
                 System.out.println("[EventLoopServer] accepted " + client.getRemoteAddress()
                         + " (total accepted: " + acceptedCount + ")");
@@ -84,15 +82,29 @@ public class EventLoopServer {
             }
         }
     }
-    private void handleReadPlaceholder(SelectionKey key) throws IOException {
-        SocketChannel client = (SocketChannel) key.channel();
-        ByteBuffer scratch = ByteBuffer.allocate(4096);
-        int n = client.read(scratch);
+    private void handleRead(SelectionKey key) throws IOException {
+        ConnectionState state = (ConnectionState) key.attachment();
+
+        int n = state.readFromChannel();
         if (n == -1) {
-            System.out.println("[EventLoopServer] client closed " + client.getRemoteAddress());
+            System.out.println("[EventLoopServer] client closed " + state.channel().getRemoteAddress()
+                    + " (" + state.requestsSeen() + " request(s), " + state.totalBytesRead() + " bytes)");
             closeKey(key);
-        } else if (n > 0) {
-            System.out.println("[EventLoopServer] OP_READ: " + n + " bytes (discarded until 28 Sep)");
+            return;
+        }
+        if (n == 0 && !state.isInboundFull()) {
+            return;
+        }
+        int headLength;
+        while ((headLength = state.findHeadEnd()) != -1) {
+            byte[] head = state.consume(headLength);
+            System.out.println("[EventLoopServer] request head #" + state.requestsSeen()
+                    + " complete (" + head.length + " bytes)");
+        }
+        if (state.isInboundFull()) {
+            System.err.println("[EventLoopServer] request head exceeds " + ConnectionState.MAX_HEAD_BYTES
+                    + " bytes without terminating - closing connection");
+            closeKey(key);
         }
     }
     private void closeKey(SelectionKey key) {
