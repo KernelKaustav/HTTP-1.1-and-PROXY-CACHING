@@ -27,7 +27,7 @@ public class LoadTester {
 
         long wallClockStart = System.nanoTime();
         for (int i = 0; i < totalRequests; i++) {
-            futures.add(clientPool.submit(() -> sendOneRequest(host, port, errors)));
+            futures.add(clientPool.submit(() -> LoadTesterInternal.sendOneRequest(host, port, errors)));
         }
 
         List<Long> latenciesMs = new ArrayList<>(totalRequests);
@@ -55,26 +55,7 @@ public class LoadTester {
         System.out.printf("p99 latency:     %d ms%n", percentile(latenciesMs, 99));
     }
 
-    static long sendOneRequest(String host, int port, AtomicInteger errors) {
-        long start = System.nanoTime();
-        try (Socket socket = new Socket(host, port)) {
-            OutputStream out = socket.getOutputStream();
-            String request = "GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
-            out.write(request.getBytes());
-            out.flush();
-
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            String line;
-            while ((line = in.readLine()) != null && !line.isEmpty()) {
-                // draining headers is enough
-            }
-            long end = System.nanoTime();
-            return (end - start) / 1_000_000;
-        } catch (IOException e) {
-            errors.incrementAndGet();
-            return -1;
-        }
-    }
+   
 
     private static long percentile(List<Long> sortedLatencies, int p) {
         if (sortedLatencies.isEmpty()) return 0;
