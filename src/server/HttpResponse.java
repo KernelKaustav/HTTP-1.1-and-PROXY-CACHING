@@ -3,35 +3,44 @@ package server;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-
-/**
- * A response a RequestHandler builds and the server writes back to the
- * client. Kept as a small mutable builder rather than a record-style
- * immutable class, since handlers typically build it up incrementally
- * (set status, add headers, then attach a body).
- *
- * Status line + reason phrases are the small subset required by Core
- * (200, 304, 400, 404, 405, 414, 431, 500, 505); extend the map in
- * reasonPhraseFor(...) as more codes are needed.
- */
 public final class HttpResponse {
 
     private int statusCode = 200;
-    private final Map<String, String> headers = new LinkedHashMap<>();
+    private String reasonPhrase;
+    private final Map<String, List<String>> headers = new LinkedHashMap<>();
     private byte[] body = new byte[0];
 
     public HttpResponse status(int statusCode) {
         this.statusCode = statusCode;
         return this;
     }
-
-    public HttpResponse header(String name, String value) {
-        headers.put(name, value);
+    public HttpResponse reasonPhrase(String reasonPhrase) {
+        for (int i = 0; i < reasonPhrase.length(); i++) {
+            char c = reasonPhrase.charAt(i);
+            if ((c < 32 && c != '\t') || c == 127 || c > 255) {
+                throw new IllegalArgumentException("Invalid reason phrase");
+            }
+        }
+        this.reasonPhrase = reasonPhrase;
         return this;
     }
 
+    public HttpResponse header(String name, String value) {
+        List<String> values = new ArrayList<>();
+        values.add(value);
+        headers.put(name.toLowerCase(Locale.ROOT), values);
+        return this;
+    }
+    public HttpResponse addHeader(String name, String value) {
+        headers.computeIfAbsent(name.toLowerCase(Locale.ROOT),
+                ignored -> new ArrayList<>()).add(value);
+        return this;
+    }
     public HttpResponse body(byte[] body) {
         this.body = body;
         header("Content-Length", String.valueOf(body.length));
@@ -56,8 +65,10 @@ public final class HttpResponse {
         StringBuilder head = new StringBuilder();
         head.append("HTTP/1.1 ").append(statusCode).append(' ')
             .append(reasonPhraseFor(statusCode)).append("\r\n");
-        for (Map.Entry<String, String> h : headers.entrySet()) {
-            head.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");
+        for (Map.Entry<String, List<String>> h : headers.entrySet()) {
+            for (String value : h.getValue()) {
+            head.append(h.getKey()).append(": ").append(value).append("\r\n");
+            }
         }
         head.append("\r\n");
 
@@ -76,6 +87,8 @@ public final class HttpResponse {
             case 414: return "URI Too Long";
             case 431: return "Request Header Fields Too Large";
             case 500: return "Internal Server Error";
+            case 502: return "Bad Gateway";
+            case 504: return "Gateway Timeout";
             case 505: return "HTTP Version Not Supported";
             case 403: return  "Forbidden";
             default:  return "Unknown";
