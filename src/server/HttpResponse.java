@@ -62,20 +62,22 @@ public final class HttpResponse {
      * keep-alive connection may serve many responses.
      */
     public void writeTo(OutputStream out) throws IOException {
-        StringBuilder head = new StringBuilder();
-        head.append("HTTP/1.1 ").append(statusCode).append(' ')
-            .append(reasonPhraseFor(statusCode)).append("\r\n");
-        for (Map.Entry<String, List<String>> h : headers.entrySet()) {
-            for (String value : h.getValue()) {
-            head.append(h.getKey()).append(": ").append(value).append("\r\n");
-            }
-        }
-        head.append("\r\n");
+    String reason = (reasonPhrase != null) ? reasonPhrase : reasonPhraseFor(statusCode);
 
-        out.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
-        out.write(body);
-        out.flush();
+    StringBuilder head = new StringBuilder();
+    head.append("HTTP/1.1 ").append(statusCode).append(' ')
+        .append(reason).append("\r\n");
+    for (Map.Entry<String, List<String>> h : headers.entrySet()) {
+        for (String value : h.getValue()) {
+        head.append(h.getKey()).append(": ").append(value).append("\r\n");
+        }
     }
+    head.append("\r\n");
+
+    out.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
+    out.write(body);
+    out.flush();
+}
 
     private static String reasonPhraseFor(int code) {
         switch (code) {

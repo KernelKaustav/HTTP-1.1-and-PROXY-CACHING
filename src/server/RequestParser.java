@@ -2,6 +2,8 @@ package server;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 public final class RequestParser {
@@ -25,6 +27,28 @@ public final class RequestParser {
             }
         }
 
+        StartLine startLine = parseStartLineText(requestLine);
+        Map<String, String> headers = parseHeaders(in);
+
+        return new HttpRequest(startLine.method, startLine.rawMethodToken, startLine.target,
+                                startLine.version, headers);
+    }
+
+    static final class StartLine {
+        final HttpMethod method;
+        final String rawMethodToken;
+        final String target;
+        final String version;
+
+        StartLine(HttpMethod method, String rawMethodToken, String target, String version) {
+            this.method = method;
+            this.rawMethodToken = rawMethodToken;
+            this.target = target;
+            this.version = version;
+        }
+    }
+
+    static StartLine parseStartLineText(String requestLine) throws MalformedRequestException {
         String[] parts = requestLine.split(" ", -1);
         if (parts.length != 3) {
             throw new MalformedRequestException(
@@ -42,9 +66,72 @@ public final class RequestParser {
         }
 
         HttpMethod method = HttpMethod.fromToken(methodToken);
-        Map<String, String> headers = parseHeaders(in);
+        return new StartLine(method, methodToken, target, version);
+    }
 
-        return new HttpRequest(method, methodToken, target, version, headers);
+    static void addHeaderLine(String line, HttpHeaders headers) throws MalformedRequestException {
+        if (line.charAt(0) == ' ' || line.charAt(0) == '\t') {
+            throw new MalformedRequestException(
+                "obsolete line folding is not supported: " + line, 400);
+        }
+        int colon = line.indexOf(':');
+        if (colon <= 0) {
+            throw new MalformedRequestException("malformed header line: " + line, 400);
+        }
+        String name = line.substring(0, colon).trim();
+        String value = line.substring(colon + 1).trim();
+        headers.add(name, value);
+    }
+
+    /**
+     * Parses a complete request head (start line + headers, including the
+     * terminating blank line) that's already fully in memory — the shape
+     * ConnectionState.consume() hands back in the event-loop model, after
+     * its own buffering (partial-arrival across reads) and the caller's
+     * drain loop (pipelining) have already done their job. Reuses the
+     * same validation as the blocking path so the event loop produces
+     * identical status codes and header handling instead of a third,
+     * looser parser.
+     *
+     * Tolerant of both CRLF and lone-LF line endings, since
+     * ConnectionState.findHeadEnd() accepts either as a terminator.
+     */
+    public static HttpRequest parseFromHeadBytes(byte[] head) throws MalformedRequestException {
+        String text = new String(head, java.nio.charset.StandardCharsets.ISO_8859_1);
+        List<String> lines = splitLines(text);
+        if (lines.isEmpty() || lines.get(0).isEmpty()) {
+            throw new MalformedRequestException("empty request line", 400);
+        }
+
+        StartLine startLine = parseStartLineText(lines.get(0));
+
+        HttpHeaders headers = new HttpHeaders();
+        for (int i = 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (headers.size() >= MAX_HEADER_COUNT) {
+                throw new MalformedRequestException("too many headers", 431);
+            }
+            addHeaderLine(line, headers);
+        }
+
+        return new HttpRequest(startLine.method, startLine.rawMethodToken, startLine.target,
+                                startLine.version, headers.asMap());
+    }
+
+    private static List<String> splitLines(String text) {
+        List<String> lines = new ArrayList<>();
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                int end = (i > start && text.charAt(i - 1) == '\r') ? i - 1 : i;
+                lines.add(text.substring(start, end));
+                start = i + 1;
+            }
+        }
+        return lines;
     }
 
     private static Map<String, String> parseHeaders(InputStream in)
@@ -61,17 +148,6 @@ public final class RequestParser {
                 break;
             }
 
-            // Obsolete line folding (RFC 7230 §3.2.4): a continuation line
-            // starts with a space or tab and is meant to extend the value
-            // of the previous header. The RFC tells servers to reject this
-            // outright rather than silently unfold it — folding is a known
-            // request-smuggling vector, so we treat it as malformed instead
-            // of stitching it back together.
-            if (line.charAt(0) == ' ' || line.charAt(0) == '\t') {
-                throw new MalformedRequestException(
-                    "obsolete line folding is not supported: " + line, 400);
-            }
-
             totalHeaderBytes += line.length();
             if (totalHeaderBytes > MAX_TOTAL_HEADER_LENGTH) {
                 throw new MalformedRequestException("header block too large", 431);
@@ -80,16 +156,7 @@ public final class RequestParser {
                 throw new MalformedRequestException("too many headers", 431);
             }
 
-            int colon = line.indexOf(':');
-            if (colon <= 0) {
-                throw new MalformedRequestException("malformed header line: " + line, 400);
-            }
-            String name = line.substring(0, colon).trim();
-            String value = line.substring(colon + 1).trim();
-
-            // HttpHeaders.add() handles both the case-insensitive lookup
-            // key and RFC 7230 §3.2.2 duplicate-combining in one place.
-            headers.add(name, value);
+            addHeaderLine(line, headers);
         }
 
         return headers.asMap();
