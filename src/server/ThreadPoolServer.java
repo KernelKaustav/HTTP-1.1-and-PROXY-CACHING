@@ -89,7 +89,7 @@ Thread.currentThread().interrupt();
             System.err.println("Pool size must be a positive integer ");
             System.exit(1);
         }
-        ThreadPoolServer server = new ThreadPoolServer(port, poolSize, new EchoRequestHandler());
+        ThreadPoolServer server = new ThreadPoolServer(port, poolSize, new StaticFileHandler("test-site")); 
         Runtime.getRuntime().addShutdownHook(new Thread(()->{
             System.out.println("\n[ThreadPoolServer] shutdown signal received, stopping gracefully.");
             try{
