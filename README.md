@@ -49,7 +49,7 @@ Java (java.net sockets, java.util.concurrent thread polls, java.nio/Selector for
 - [x] TCP accept loop skeleton
 - [x] Request-line and header parsing (begun)
 - [x] GET / HEAD handling with correct status codes
-- [ ] Persistent connections (keep-alive) + Content-Length handling
+- [x] Persistent connections (keep-alive) + Content-Length handling
 - [ ] Chunked transfer encoding
 - [x] Static file serving (MIME types, directory-traversal protection)
 - [x] Thread pool concurrency model
