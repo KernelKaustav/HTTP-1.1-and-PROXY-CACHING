@@ -18,7 +18,7 @@ public class ThreadPoolServer{
         this.requestHandler = requestHandler;
     }
     public void start() throws IOException{
-        serverSocket = new ServerSocket(port);
+        serverSocket = new ServerSocket(port,1024);
         pool = new ThreadPoolExecutor(poolSize,poolSize, 0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), new ThreadPoolExecutor.CallerRunsPolicy());
         running = true;
         startStatsMonitor(10);
@@ -47,13 +47,13 @@ public class ThreadPoolServer{
             System.out.println("[ThreadPoolServer] waiting for in-flight request to finish.");
             if(!pool.awaitTermination(5,TimeUnit.SECONDS)){
                 System.err.println("[ThreadPoolServer] pool did not terminate in time, forcing shutdown");
-                pool.shutdown();
+                pool.shutdownNow();
             } else {
                 System.out.println("[ThreadPoolServer] shutdown complete, all request finished.");
             }
 
         } catch (InterruptedException e){
-pool.shutdown();
+pool.shutdownNow();
 Thread.currentThread().interrupt();
         }
     }
