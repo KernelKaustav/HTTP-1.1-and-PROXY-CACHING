@@ -28,8 +28,13 @@ public class EventLoopServer {
     private long partialWriteCount = 0;
     private long totalBytesWritten = 0;
     private final Map<SelectionKey, OutboundQueue> outbound = new HashMap<>();
+    private final KeepAliveManager keepAlive;
     public EventLoopServer(int port) {
+        this(port, KeepAliveManager.DEFAULT_IDLE_TIMEOUT_MS);
+    }
+    public EventLoopServer(int port, long idleTimeoutMs) {
         this.port = port;
+        this.keepAlive = new KeepAliveManager(idleTimeoutMs, KeepAliveManager.DEFAULT_MAX_REQUESTS);
     }
     public void start() throws IOException {
         selector = Selector.open();
@@ -40,15 +45,14 @@ public class EventLoopServer {
         serverChannel.socket().bind(new InetSocketAddress(port), 1024);
         serverChannel.register(selector, SelectionKey.OP_ACCEPT);
         running = true;
-        System.out.println("[EventLoopServer] listening on port " + port);
+        System.out.println("[EventLoopServer] listening on port " + port
+                + " (keep-alive idle timeout " + keepAlive.idleTimeoutMs() + " ms, max "
+                + keepAlive.maxRequests() + " requests/connection)");
         loop();
     }
     private void loop() throws IOException {
         while (running) {
-            int ready = selector.select(SELECT_TIMEOUT_MS);
-            if (ready == 0) {
-                continue;
-            }
+            selector.select(SELECT_TIMEOUT_MS);
             Set<SelectionKey> selectedKeys = selector.selectedKeys();
             Iterator<SelectionKey> it = selectedKeys.iterator();
             while (it.hasNext()) {
@@ -60,6 +64,7 @@ public class EventLoopServer {
                 }
                 dispatch(key);
             }
+            closeIdleConnections();
         }
     }
     private void dispatch(SelectionKey key) {
@@ -88,7 +93,9 @@ public class EventLoopServer {
             try {
                 client.configureBlocking(false);
                 client.setOption(java.net.StandardSocketOptions.TCP_NODELAY, true);
-                client.register(selector, SelectionKey.OP_READ, new ConnectionState(client));
+                SelectionKey clientKey = client.register(selector, SelectionKey.OP_READ,
+                        new ConnectionState(client));
+                keepAlive.register(clientKey);
                 acceptedCount++;
                 System.out.println("[EventLoopServer] accepted " + client.getRemoteAddress()
                         + " (total accepted: " + acceptedCount + ")");
@@ -101,6 +108,9 @@ public class EventLoopServer {
     private void handleRead(SelectionKey key) throws IOException {
         ConnectionState state = (ConnectionState) key.attachment();
         int n = state.readFromChannel();
+        if (n > 0) {
+            keepAlive.touch(key);
+        }
         if (n == -1) {
             System.out.println("[EventLoopServer] client closed " + state.channel().getRemoteAddress()
                     + " (" + state.requestsSeen() + " request(s), " + state.totalBytesRead() + " bytes)");
@@ -111,13 +121,16 @@ public class EventLoopServer {
             return;
         }
         int headLength;
-        while ((headLength = state.findHeadEnd()) != -1) {
+        while (!keepAlive.isClosing(key) && (headLength = state.findHeadEnd()) != -1) {
             byte[] head = state.consume(headLength);
             System.out.println("[EventLoopServer] request head #" + state.requestsSeen()
                     + " complete (" + head.length + " bytes)");
-            queueResponse(key, buildTestResponse(head));
+            respondTo(key, head);
+            if (!key.isValid()) {
+                return;          // flush() already closed the connection
+            }
         }
-        if (state.isInboundFull()) {
+        if (!keepAlive.isClosing(key) && state.isInboundFull()) {
             System.err.println("[EventLoopServer] request head exceeds " + ConnectionState.MAX_HEAD_BYTES
                     + " bytes without terminating - closing connection");
             closeKey(key);
@@ -131,7 +144,6 @@ public class EventLoopServer {
     private void handleWrite(SelectionKey key) throws IOException {
         OutboundQueue queue = outbound.get(key);
         if (queue == null) {
-            // Nothing to send 
             key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
             return;
         }
@@ -140,9 +152,19 @@ public class EventLoopServer {
     private void flush(SelectionKey key, OutboundQueue queue) throws IOException {
         SocketChannel channel = (SocketChannel) key.channel();
         boolean wasWaitingForWrite = (key.interestOps() & SelectionKey.OP_WRITE) != 0;
-        totalBytesWritten += queue.drainTo(channel);
+        long written = queue.drainTo(channel);
+        totalBytesWritten += written;
+        if (written > 0) {
+            keepAlive.touch(key);     // a slow reader that is still draining is not idle
+        }
         if (queue.isEmpty()) {
             outbound.remove(key);
+            if (keepAlive.isClosing(key)) {
+                System.out.println("[EventLoopServer] closing " + channel.getRemoteAddress()
+                        + " after final response (Connection: close)");
+                closeKey(key);
+                return;
+            }
             key.interestOps(SelectionKey.OP_READ);
             if (wasWaitingForWrite) {
                 System.out.println("[EventLoopServer] write drained for " + channel.getRemoteAddress());
@@ -150,7 +172,7 @@ public class EventLoopServer {
             return;
         }
         int ops = key.interestOps() | SelectionKey.OP_WRITE;
-        if (queue.pendingBytes() > PAUSE_READS_ABOVE_BYTES) {
+        if (queue.pendingBytes() > PAUSE_READS_ABOVE_BYTES || keepAlive.isClosing(key)) {
             ops &= ~SelectionKey.OP_READ;
         }
         key.interestOps(ops);
@@ -161,16 +183,35 @@ public class EventLoopServer {
                     + " (partial writes so far: " + partialWriteCount + ")");
         }
     }
-    private byte[] buildTestResponse(byte[] head) throws IOException {
-        String requestLine = new String(head, StandardCharsets.ISO_8859_1).split("\r?\n", 2)[0];
-        String[] parts = requestLine.split(" ");
+    private void respondTo(SelectionKey key, byte[] head) throws IOException {
+        int served = keepAlive.recordRequest(key);
+        HttpResponse response;
+        boolean persistent;
+        try {
+            HttpRequest request = RequestParser.parseFromHeadBytes(head);
+            response = buildTestResponse(request);
+            persistent = keepAlive.wantsKeepAlive(request)
+                    && !keepAlive.isRequestQuotaReached(served);
+        } catch (MalformedRequestException e) {
+            response = new HttpResponse().header("Content-Type", "text/plain")
+                    .status(e.statusCode()).body(e.getMessage() + "\n");
+            persistent = false;
+        }
+        keepAlive.applyHeaders(response, persistent, served);
+        if (!persistent) {
+            keepAlive.markClosing(key);
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        response.writeTo(out);
+        queueResponse(key, out.toByteArray());
+    }
+    private HttpResponse buildTestResponse(HttpRequest request) {
         HttpResponse response = new HttpResponse().header("Content-Type", "text/plain");
-        if (parts.length != 3) {
-            response.status(400).body("Bad Request\n");
-        } else if (parts[1].startsWith("/big/")) {
+        String target = request.target();
+        if (target.startsWith("/big/")) {
             int size;
             try {
-                size = Integer.parseInt(parts[1].substring(5));
+                size = Integer.parseInt(target.substring(5));
             } catch (NumberFormatException e) {
                 size = 0;
             }
@@ -181,12 +222,27 @@ public class EventLoopServer {
         } else {
             response.status(200).body("event-loop placeholder response\n");
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        response.writeTo(out);
-        return out.toByteArray();
+        return response;
     }
+    private void closeIdleConnections() {
+        for (SelectionKey key : keepAlive.collectExpired()) {
+            System.out.println("[EventLoopServer] idle timeout (" + keepAlive.idleTimeoutMs()
+                    + " ms) - closing " + describe(key));
+            closeKey(key);
+        }
+    }
+
+    private String describe(SelectionKey key) {
+        try {
+            return String.valueOf(((SocketChannel) key.channel()).getRemoteAddress());
+        } catch (IOException e) {
+            return "(unknown peer)";
+        }
+    }
+
     private void closeKey(SelectionKey key) {
         outbound.remove(key);
+        keepAlive.remove(key);
         key.cancel();
         closeQuietly(key.channel());
     }
@@ -209,6 +265,7 @@ public class EventLoopServer {
             }
         }
         outbound.clear();
+        keepAlive.clear();
         try {
             if (serverChannel != null) {
                 serverChannel.close();
@@ -263,7 +320,20 @@ public class EventLoopServer {
                 System.err.println("Invalid port: " + args[0] + " - using " + DEFAULT_PORT);
             }
         }
-        EventLoopServer server = new EventLoopServer(port);
+        long idleTimeoutMs = KeepAliveManager.DEFAULT_IDLE_TIMEOUT_MS;
+        if (args.length > 1) {
+            try {
+                idleTimeoutMs = Long.parseLong(args[1]) * 1000L;
+                if (idleTimeoutMs <= 0) {
+                    throw new NumberFormatException("must be > 0");
+                }
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid idle timeout (seconds): " + args[1] + " - using "
+                        + KeepAliveManager.DEFAULT_IDLE_TIMEOUT_MS / 1000);
+                idleTimeoutMs = KeepAliveManager.DEFAULT_IDLE_TIMEOUT_MS;
+            }
+        }
+        EventLoopServer server = new EventLoopServer(port, idleTimeoutMs);
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
         try {
             server.start();
