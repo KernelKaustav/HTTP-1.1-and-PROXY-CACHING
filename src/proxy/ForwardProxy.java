@@ -38,7 +38,7 @@ public final class ForwardProxy implements RequestHandler {
     private static final int MAX_LINE_BYTES = 8_192;
     private static final int MAX_HEADER_BYTES = 32_768;
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
-    private static final String TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+"; //used ai
+    private static final String TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
     private static final Set<String> HOP_HEADERS = new HashSet<>(Arrays.asList(
             "connection", "proxy-connection", "keep-alive", "te", "trailer",
             "transfer-encoding", "upgrade", "proxy-authorization",
@@ -323,7 +323,8 @@ public final class ForwardProxy implements RequestHandler {
         }
 
         Long representationLength =
-        noBody && status != 204 && contentLength != null? parseLength(contentLength): null;
+                noBody && status != 204 && contentLength != null
+                        ? parseLength(contentLength) : null;
         return new ResponseData(
                 status,
                 reason,
@@ -454,196 +455,196 @@ public final class ForwardProxy implements RequestHandler {
                 : response.body(body);
     }
     private static boolean permitsCaching(HttpRequest request) {
-    for (String name : request.headers().keySet()) {
-        String lower = name.toLowerCase(Locale.ROOT);
+        for (String name : request.headers().keySet()) {
+            String lower = name.toLowerCase(Locale.ROOT);
 
-        if (lower.equals("authorization")
-                || lower.equals("cookie")
-                || lower.equals("range")
-                || lower.startsWith("if-")) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
- * Stores the upstream response data.
- *
- * Every client receives a newly constructed HttpResponse because
- * HttpResponse is mutable.
- */
-private static final class ResponseData {
-
-    final int status;
-    final String reason;
-    final Map<String, List<String>> headers;
-    final byte[] body;
-    final boolean noBody;
-    final Long representationLength;
-
-    ResponseData(
-            int status,
-            String reason,
-            Map<String, List<String>> headers,
-            byte[] body,
-            boolean noBody,
-            Long representationLength
-    ) {
-        this.status = status;
-        this.reason = reason;
-        this.headers = headers;
-        this.body = body;
-        this.noBody = noBody;
-        this.representationLength = representationLength;
-    }
-
-    HttpResponse toResponse() {
-        HttpResponse response = new HttpResponse()
-                .status(status)
-                .reasonPhrase(reason);
-
-        Set<String> excluded = hopHeaders(
-                joined(headers, "connection")
-        );
-
-        excluded.add("content-length");
-
-        for (Map.Entry<String, List<String>> field
-                : headers.entrySet()) {
-            if (!excluded.contains(field.getKey())) {
-                for (String value : field.getValue()) {
-                    response.addHeader(field.getKey(), value);
-                }
+            if (lower.equals("authorization")
+                    || lower.equals("cookie")
+                    || lower.equals("range")
+                    || lower.startsWith("if-")) {
+                return false;
             }
         }
 
-        if (!noBody) {
-            response.body(body.clone());
-        } else if (representationLength != null) {
-            response.header(
-                    "Content-Length",
-                    Long.toString(representationLength)
+        return true;
+    }
+
+    /**
+     * Stores the upstream response data.
+     *
+     * Every client receives a newly constructed HttpResponse because
+     * HttpResponse is mutable.
+     */
+    private static final class ResponseData {
+
+        final int status;
+        final String reason;
+        final Map<String, List<String>> headers;
+        final byte[] body;
+        final boolean noBody;
+        final Long representationLength;
+
+        ResponseData(
+                int status,
+                String reason,
+                Map<String, List<String>> headers,
+                byte[] body,
+                boolean noBody,
+                Long representationLength
+        ) {
+            this.status = status;
+            this.reason = reason;
+            this.headers = headers;
+            this.body = body;
+            this.noBody = noBody;
+            this.representationLength = representationLength;
+        }
+
+        HttpResponse toResponse() {
+            HttpResponse response = new HttpResponse()
+                    .status(status)
+                    .reasonPhrase(reason);
+
+            Set<String> excluded = hopHeaders(
+                    joined(headers, "connection")
+            );
+
+            excluded.add("content-length");
+
+            for (Map.Entry<String, List<String>> field
+                    : headers.entrySet()) {
+                if (!excluded.contains(field.getKey())) {
+                    for (String value : field.getValue()) {
+                        response.addHeader(field.getKey(), value);
+                    }
+                }
+            }
+
+            if (!noBody) {
+                response.body(body.clone());
+            } else if (representationLength != null) {
+                response.header(
+                        "Content-Length",
+                        Long.toString(representationLength)
+                );
+            }
+
+            return response.header("Connection", "close");
+        }
+    }
+
+    /**
+     * A cached response plus the information needed to calculate its age.
+     */
+    private static final class CachedResponse {
+
+        final ResponseData data;
+        final CachePolicy policy;
+        final long receivedAt;
+        final long initialAgeMillis;
+
+        CachedResponse(
+                ResponseData data,
+                CachePolicy policy,
+                long sentAt,
+                long receivedAt
+        ) {
+            this.data = data;
+            this.policy = policy;
+            this.receivedAt = receivedAt;
+
+            this.initialAgeMillis = initialAge(
+                    data.headers,
+                    sentAt,
+                    receivedAt
             );
         }
 
-        return response.header("Connection", "close");
-    }
-}
-
-/**
- * A cached response plus the information needed to calculate its age.
- */
-private static final class CachedResponse {
-
-    final ResponseData data;
-    final CachePolicy policy;
-    final long receivedAt;
-    final long initialAgeMillis;
-
-    CachedResponse(
-            ResponseData data,
-            CachePolicy policy,
-            long sentAt,
-            long receivedAt
-    ) {
-        this.data = data;
-        this.policy = policy;
-        this.receivedAt = receivedAt;
-
-        this.initialAgeMillis = initialAge(
-                data.headers,
-                sentAt,
-                receivedAt
-        );
-    }
-
-    long currentAgeMillis(long now) {
-        // A backwards clock adjustment must not extend freshness.
-        if (now < receivedAt) {
-            return Long.MAX_VALUE;
-        }
-
-        return saturatedAdd(
-                initialAgeMillis,
-                now - receivedAt
-        );
-    }
-}
-
-/**
- * Accounts for the response's existing Age, its Date, and the
- * time spent obtaining it from the upstream server.
- */
-private static long initialAge(
-        Map<String, List<String>> headers,
-        long sentAt,
-        long receivedAt
-) {
-    if (receivedAt < sentAt) {
-        return Long.MAX_VALUE;
-    }
-
-    long apparentAge = 0;
-    String date = joined(headers, "date");
-
-    if (date != null) {
-        try {
-            long dateMillis = ZonedDateTime.parse(
-                    date,
-                    DateTimeFormatter.RFC_1123_DATE_TIME
-            ).toInstant().toEpochMilli();
-
-            apparentAge = Math.max(
-                    0,
-                    Math.subtractExact(receivedAt, dateMillis)
-            );
-
-        } catch (DateTimeParseException | ArithmeticException e) {
-            // Invalid age information: treat as stale.
-            return Long.MAX_VALUE;
-        }
-    }
-
-    long ageMillis = 0;
-    String age = joined(headers, "age");
-
-    if (age != null) {
-        try {
-            String value = age.trim();
-
-            if (!value.matches("[0-9]+")) {
+        long currentAgeMillis(long now) {
+            // A backwards clock adjustment must not extend freshness.
+            if (now < receivedAt) {
                 return Long.MAX_VALUE;
             }
 
-            ageMillis = Math.multiplyExact(
-                    Long.parseLong(value),
-                    1000
+            return saturatedAdd(
+                    initialAgeMillis,
+                    now - receivedAt
             );
-
-        } catch (NumberFormatException | ArithmeticException e) {
-            return Long.MAX_VALUE;
         }
     }
 
-    long responseDelay = receivedAt - sentAt;
+    /**
+     * Accounts for the response's existing Age, its Date, and the
+     * time spent obtaining it from the upstream server.
+     */
+    private static long initialAge(
+            Map<String, List<String>> headers,
+            long sentAt,
+            long receivedAt
+    ) {
+        if (receivedAt < sentAt) {
+            return Long.MAX_VALUE;
+        }
 
-    long correctedAge = saturatedAdd(
-            ageMillis,
-            responseDelay
-    );
+        long apparentAge = 0;
+        String date = joined(headers, "date");
 
-    return Math.max(apparentAge, correctedAge);
-}
+        if (date != null) {
+            try {
+                long dateMillis = ZonedDateTime.parse(
+                        date,
+                        DateTimeFormatter.RFC_1123_DATE_TIME
+                ).toInstant().toEpochMilli();
 
-private static long saturatedAdd(long first, long second) {
-    if (first > Long.MAX_VALUE - second) {
-        return Long.MAX_VALUE;
+                apparentAge = Math.max(
+                        0,
+                        Math.subtractExact(receivedAt, dateMillis)
+                );
+
+            } catch (DateTimeParseException | ArithmeticException e) {
+                // Invalid age information: treat as stale.
+                return Long.MAX_VALUE;
+            }
+        }
+
+        long ageMillis = 0;
+        String age = joined(headers, "age");
+
+        if (age != null) {
+            try {
+                String value = age.trim();
+
+                if (!value.matches("[0-9]+")) {
+                    return Long.MAX_VALUE;
+                }
+
+                ageMillis = Math.multiplyExact(
+                        Long.parseLong(value),
+                        1000
+                );
+
+            } catch (NumberFormatException | ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        long responseDelay = receivedAt - sentAt;
+
+        long correctedAge = saturatedAdd(
+                ageMillis,
+                responseDelay
+        );
+
+        return Math.max(apparentAge, correctedAge);
     }
 
-    return first + second;
-}
+    private static long saturatedAdd(long first, long second) {
+        if (first > Long.MAX_VALUE - second) {
+            return Long.MAX_VALUE;
+        }
+
+        return first + second;
+    }
 
     public static void main(String[] args) throws IOException {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
