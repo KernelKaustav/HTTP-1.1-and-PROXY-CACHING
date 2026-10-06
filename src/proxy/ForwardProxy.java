@@ -26,28 +26,49 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import java.time.Clock;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.Objects;
+
 public final class ForwardProxy implements RequestHandler {
     private static final int CONNECT_TIMEOUT_MS = 5_000;
     private static final int READ_TIMEOUT_MS = 10_000;
     private static final int MAX_LINE_BYTES = 8_192;
     private static final int MAX_HEADER_BYTES = 32_768;
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
-    private static final String TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+"; //used ai
+    private static final String TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
     private static final Set<String> HOP_HEADERS = new HashSet<>(Arrays.asList(
             "connection", "proxy-connection", "keep-alive", "te", "trailer",
             "transfer-encoding", "upgrade", "proxy-authorization",
             "proxy-authenticate"));
+    private final LruCache<String, CachedResponse> cache;
+    private final Clock clock;
 
+    public ForwardProxy() {
+        this(64);
+    }
+
+    public ForwardProxy(int cacheCapacity) {
+        this(cacheCapacity, Clock.systemUTC());
+    }
+    ForwardProxy(int cacheCapacity, Clock clock) {
+        this.cache = new LruCache<>(cacheCapacity);
+        this.clock = Objects.requireNonNull(clock, "clock");
+    }
     @Override
     public HttpResponse handle(HttpRequest request) {
         boolean head = request.method() == HttpMethod.HEAD;
+
         if (request.method() != HttpMethod.GET && !head) {
             return error(405, "Only GET and HEAD are supported.", false)
                     .header("Allow", "GET, HEAD");
         }
 
-        // HttpRequest does not yet store request bodies. Reject them explicitly.
+        // HttpRequest does not yet support request bodies.
         String length = request.header("content-length");
+
         if (request.header("transfer-encoding") != null
                 || request.header("expect") != null
                 || (length != null && !length.matches("0+"))) {
@@ -55,58 +76,208 @@ public final class ForwardProxy implements RequestHandler {
         }
 
         final URI uri;
+
         try {
             uri = new URI(new URI(request.target()).toASCIIString());
         } catch (URISyntaxException e) {
             return error(400, "Invalid absolute URI.", head);
         }
-        if (!"http".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
-                || uri.getRawUserInfo() != null || uri.getRawFragment() != null
-                || uri.getPort() == 0 || uri.getPort() > 65535) {
-            return error(400, "Use an absolute http:// URL without credentials or fragments.", head);
+
+        if (!"http".equalsIgnoreCase(uri.getScheme())
+                || uri.getHost() == null
+                || uri.getRawUserInfo() != null
+                || uri.getRawFragment() != null
+                || uri.getPort() == 0
+                || uri.getPort() > 65535) {
+            return error(
+                    400,
+                    "Use an absolute http:// URL without credentials or fragments.",
+                    head
+            );
         }
 
         String host = uri.getHost();
-        if (host.startsWith("[")) host = host.substring(1, host.length() - 1);
+
+        if (host.startsWith("[")) {
+            host = host.substring(1, host.length() - 1);
+        }
+
         int port = uri.getPort() == -1 ? 80 : uri.getPort();
+
         String path = uri.getRawPath();
-        if (path == null || path.isEmpty()) path = "/";
-        if (uri.getRawQuery() != null) path += "?" + uri.getRawQuery();
 
-        try (Socket upstream = new Socket()) {
-            upstream.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
-            upstream.setSoTimeout(READ_TIMEOUT_MS);
+        if (path == null || path.isEmpty()) {
+            path = "/";
+        }
 
-            // Use origin-form upstream: GET /path?query HTTP/1.1.
-            String hostHeader = host.contains(":") ? "[" + host + "]" : host;
-            if (port != 80) hostHeader += ":" + port;
-            StringBuilder outgoing = new StringBuilder()
-                    .append(head ? "HEAD " : "GET ").append(path).append(" HTTP/1.1\r\n")
-                    .append("Host: ").append(hostHeader).append("\r\n");
-            Set<String> excluded = hopHeaders(request.header("connection"));
-            excluded.add("host");
-            excluded.add("content-length");
-            excluded.add("expect");
-            for (Map.Entry<String, String> field : request.headers().entrySet()) {
+        if (uri.getRawQuery() != null) {
+            path += "?" + uri.getRawQuery();
+        }
+
+        String cacheKey = host.toLowerCase(Locale.ROOT)
+                + ":" + port + path;
+
+        CachePolicy requestPolicy = CachePolicy.parse(
+                request.header("cache-control")
+        );
+
+        // HEAD, personalized requests and conditional/range requests
+        // pass directly to the origin in this version.
+        boolean cacheEligible = !head
+                && permitsCaching(request)
+                && !requestPolicy.noStore();
+
+        boolean forceRefresh = requestPolicy.requiresValidation()
+                || requestPolicy.maxAgeSeconds() == 0
+                || (request.header("cache-control") == null
+                    && CachePolicy.parse(request.header("pragma"))
+                                .requiresValidation());
+
+        try {
+            // Validate request headers even when answering from cache.
+            for (Map.Entry<String, String> field
+                    : request.headers().entrySet()) {
                 validateHeader(field.getKey(), field.getValue());
-                if (!excluded.contains(field.getKey().toLowerCase(Locale.ROOT))) {
-                    outgoing.append(field.getKey()).append(": ")
-                            .append(field.getValue()).append("\r\n");
+            }
+
+            if (cacheEligible && !forceRefresh) {
+                synchronized (cache) {
+                    CachedResponse stored = cache.get(cacheKey);
+
+                    if (stored != null) {
+                        long ageMillis = stored.currentAgeMillis(
+                                clock.millis()
+                        );
+
+                        long requestMaxAge = requestPolicy.maxAgeSeconds();
+
+                        boolean acceptableAge = requestMaxAge < 0
+                                || ageMillis <= requestMaxAge * 1000;
+
+                        if (stored.policy.isFresh(ageMillis)
+                                && acceptableAge) {
+                            return stored.data.toResponse()
+                                    .header(
+                                            "Age",
+                                            Long.toString(ageMillis / 1000)
+                                    );
+                        }
+
+                        cache.remove(cacheKey);
+                    }
                 }
             }
-            outgoing.append("Connection: close\r\n\r\n");
-            upstream.getOutputStream().write(outgoing.toString()
-                    .getBytes(StandardCharsets.ISO_8859_1));
-            upstream.getOutputStream().flush();
-            return readResponse(new BufferedInputStream(upstream.getInputStream()), head);
+
+            try (Socket upstream = new Socket()) {
+                upstream.connect(
+                        new InetSocketAddress(host, port),
+                        CONNECT_TIMEOUT_MS
+                );
+
+                upstream.setSoTimeout(READ_TIMEOUT_MS);
+
+                String hostHeader = host.contains(":")
+                        ? "[" + host + "]"
+                        : host;
+
+                if (port != 80) {
+                    hostHeader += ":" + port;
+                }
+
+                StringBuilder outgoing = new StringBuilder()
+                        .append(head ? "HEAD " : "GET ")
+                        .append(path)
+                        .append(" HTTP/1.1\r\n")
+                        .append("Host: ")
+                        .append(hostHeader)
+                        .append("\r\n");
+
+                Set<String> excluded = hopHeaders(
+                        request.header("connection")
+                );
+
+                excluded.add("host");
+                excluded.add("content-length");
+                excluded.add("expect");
+
+                for (Map.Entry<String, String> field
+                        : request.headers().entrySet()) {
+                    String name = field.getKey()
+                            .toLowerCase(Locale.ROOT);
+
+                    if (!excluded.contains(name)) {
+                        outgoing.append(field.getKey())
+                                .append(": ")
+                                .append(field.getValue())
+                                .append("\r\n");
+                    }
+                }
+
+                outgoing.append("Connection: close\r\n\r\n");
+
+                long requestTime = clock.millis();
+
+                upstream.getOutputStream().write(
+                        outgoing.toString().getBytes(
+                                StandardCharsets.ISO_8859_1
+                        )
+                );
+
+                upstream.getOutputStream().flush();
+
+                ResponseData data = readResponse(
+                        new BufferedInputStream(
+                                upstream.getInputStream()
+                        ),
+                        head
+                );
+
+                long responseTime = clock.millis();
+
+                if (cacheEligible) {
+                    CachePolicy responsePolicy = CachePolicy.parse(
+                            joined(data.headers, "cache-control")
+                    );
+
+                    CachedResponse candidate = new CachedResponse(
+                            data,
+                            responsePolicy,
+                            requestTime,
+                            responseTime
+                    );
+
+                    boolean canCache = data.status == 200
+                            && !data.headers.containsKey("set-cookie")
+                            && !data.headers.containsKey("vary")
+                            && responsePolicy.isFresh(
+                                    candidate.currentAgeMillis(responseTime)
+                            );
+
+                    if (canCache) {
+                        cache.put(cacheKey, candidate);
+                    } else {
+                        // Do not leave an older version reusable after
+                        // receiving a new response that prohibits caching.
+                        cache.remove(cacheKey);
+                    }
+                }
+
+                return data.toResponse();
+            }
+
         } catch (SocketTimeoutException e) {
             return error(504, "Upstream server timed out.", head);
+
         } catch (IOException e) {
-            return error(502, "Could not obtain a valid upstream response.", head);
+            return error(
+                    502,
+                    "Could not obtain a valid upstream response.",
+                    head
+            );
         }
     }
 
-    private static HttpResponse readResponse(InputStream in, boolean head) throws IOException {
+    private static ResponseData readResponse(InputStream in, boolean head) throws IOException {
         int status;
         String reason;
         Map<String, List<String>> headers;
@@ -151,22 +322,18 @@ public final class ForwardProxy implements RequestHandler {
             body = bytes.toByteArray();
         }
 
-        HttpResponse response = new HttpResponse().status(status).reasonPhrase(reason);
-        Set<String> excluded = hopHeaders(joined(headers, "connection"));
-        excluded.add("content-length");
-        for (Map.Entry<String, List<String>> field : headers.entrySet()) {
-            if (!excluded.contains(field.getKey())) {
-                for (String value : field.getValue()) response.addHeader(field.getKey(), value);
-            }
-        }
-        if (!noBody) {
-            response.body(body); // decoded body with a newly calculated Content-Length
-        } else if (status != 204 && contentLength != null) {
-            response.header("Content-Length", Long.toString(parseLength(contentLength)));
-        }
-        return response.header("Connection", "close");
+        Long representationLength =
+                noBody && status != 204 && contentLength != null
+                        ? parseLength(contentLength) : null;
+        return new ResponseData(
+                status,
+                reason,
+                headers,
+                body,
+                noBody,
+                representationLength
+        );
     }
-
     private static void readChunks(InputStream in, ByteArrayOutputStream out) throws IOException {
         while (true) {
             String line = readLine(in);
@@ -286,6 +453,197 @@ public final class ForwardProxy implements RequestHandler {
                 .header("Connection", "close");
         return head ? response.header("Content-Length", Integer.toString(body.length))
                 : response.body(body);
+    }
+    private static boolean permitsCaching(HttpRequest request) {
+        for (String name : request.headers().keySet()) {
+            String lower = name.toLowerCase(Locale.ROOT);
+
+            if (lower.equals("authorization")
+                    || lower.equals("cookie")
+                    || lower.equals("range")
+                    || lower.startsWith("if-")) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Stores the upstream response data.
+     *
+     * Every client receives a newly constructed HttpResponse because
+     * HttpResponse is mutable.
+     */
+    private static final class ResponseData {
+
+        final int status;
+        final String reason;
+        final Map<String, List<String>> headers;
+        final byte[] body;
+        final boolean noBody;
+        final Long representationLength;
+
+        ResponseData(
+                int status,
+                String reason,
+                Map<String, List<String>> headers,
+                byte[] body,
+                boolean noBody,
+                Long representationLength
+        ) {
+            this.status = status;
+            this.reason = reason;
+            this.headers = headers;
+            this.body = body;
+            this.noBody = noBody;
+            this.representationLength = representationLength;
+        }
+
+        HttpResponse toResponse() {
+            HttpResponse response = new HttpResponse()
+                    .status(status)
+                    .reasonPhrase(reason);
+
+            Set<String> excluded = hopHeaders(
+                    joined(headers, "connection")
+            );
+
+            excluded.add("content-length");
+
+            for (Map.Entry<String, List<String>> field
+                    : headers.entrySet()) {
+                if (!excluded.contains(field.getKey())) {
+                    for (String value : field.getValue()) {
+                        response.addHeader(field.getKey(), value);
+                    }
+                }
+            }
+
+            if (!noBody) {
+                response.body(body.clone());
+            } else if (representationLength != null) {
+                response.header(
+                        "Content-Length",
+                        Long.toString(representationLength)
+                );
+            }
+
+            return response.header("Connection", "close");
+        }
+    }
+
+    /**
+     * A cached response plus the information needed to calculate its age.
+     */
+    private static final class CachedResponse {
+
+        final ResponseData data;
+        final CachePolicy policy;
+        final long receivedAt;
+        final long initialAgeMillis;
+
+        CachedResponse(
+                ResponseData data,
+                CachePolicy policy,
+                long sentAt,
+                long receivedAt
+        ) {
+            this.data = data;
+            this.policy = policy;
+            this.receivedAt = receivedAt;
+
+            this.initialAgeMillis = initialAge(
+                    data.headers,
+                    sentAt,
+                    receivedAt
+            );
+        }
+
+        long currentAgeMillis(long now) {
+            // A backwards clock adjustment must not extend freshness.
+            if (now < receivedAt) {
+                return Long.MAX_VALUE;
+            }
+
+            return saturatedAdd(
+                    initialAgeMillis,
+                    now - receivedAt
+            );
+        }
+    }
+
+    /**
+     * Accounts for the response's existing Age, its Date, and the
+     * time spent obtaining it from the upstream server.
+     */
+    private static long initialAge(
+            Map<String, List<String>> headers,
+            long sentAt,
+            long receivedAt
+    ) {
+        if (receivedAt < sentAt) {
+            return Long.MAX_VALUE;
+        }
+
+        long apparentAge = 0;
+        String date = joined(headers, "date");
+
+        if (date != null) {
+            try {
+                long dateMillis = ZonedDateTime.parse(
+                        date,
+                        DateTimeFormatter.RFC_1123_DATE_TIME
+                ).toInstant().toEpochMilli();
+
+                apparentAge = Math.max(
+                        0,
+                        Math.subtractExact(receivedAt, dateMillis)
+                );
+
+            } catch (DateTimeParseException | ArithmeticException e) {
+                // Invalid age information: treat as stale.
+                return Long.MAX_VALUE;
+            }
+        }
+
+        long ageMillis = 0;
+        String age = joined(headers, "age");
+
+        if (age != null) {
+            try {
+                String value = age.trim();
+
+                if (!value.matches("[0-9]+")) {
+                    return Long.MAX_VALUE;
+                }
+
+                ageMillis = Math.multiplyExact(
+                        Long.parseLong(value),
+                        1000
+                );
+
+            } catch (NumberFormatException | ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
+        }
+
+        long responseDelay = receivedAt - sentAt;
+
+        long correctedAge = saturatedAdd(
+                ageMillis,
+                responseDelay
+        );
+
+        return Math.max(apparentAge, correctedAge);
+    }
+
+    private static long saturatedAdd(long first, long second) {
+        if (first > Long.MAX_VALUE - second) {
+            return Long.MAX_VALUE;
+        }
+
+        return first + second;
     }
 
     public static void main(String[] args) throws IOException {
