@@ -48,21 +48,6 @@ libraries. Python (matplotlib, pandas) for experiment plotting only.
 └── README.md
 ```
 
-## Status
-
-- [x] Repo initialized
-- [x] Shared `RequestHandler` interface + request/response model
-- [x] TCP accept loop skeleton
-- [x] Request-line and header parsing (begun)
-- [x] GET / HEAD handling with correct status codes
-- [x] Persistent connections (keep-alive) + Content-Length handling
-- [x] Chunked transfer encoding
-- [x] Static file serving (MIME types, directory-traversal protection)
-- [x] Thread pool concurrency model
-- [ ] Event loop concurrency model
-- [ ] Forward proxy + LRU cache (Cache-Control, ETag, If-Modified-Since)
-- [ ] Benchmarks: req/sec and latency percentiles vs. concurrency
-- [ ] Benchmarks: cache hit ratio and latency savings
 
 ## Building
 
