@@ -3,6 +3,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 public final class ConnectionState {
+    public static final int MAX_REQUEST_LINE_BYTES = 8192;
     public static final int MAX_HEAD_BYTES = 8192 + 16384;
     private final SocketChannel channel;
     private final ByteBuffer inbound = ByteBuffer.allocate(MAX_HEAD_BYTES);
@@ -49,6 +50,15 @@ public final class ConnectionState {
         scanFrom = 0;
         requestsSeen++;
         return out;
+    }
+    public boolean requestLineTooLong() {
+        int end = inbound.position();
+        for (int i = 0; i < end; i++) {
+            if (inbound.get(i) == '\n') {
+                return false;
+            }
+        }
+        return end > MAX_REQUEST_LINE_BYTES;
     }
     public boolean isInboundFull() {
         return !inbound.hasRemaining();

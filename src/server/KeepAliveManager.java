@@ -58,7 +58,7 @@ public final class KeepAliveManager {
         Entry e = entries.get(key);
         return (e == null) ? 1 : ++e.requestsServed;
     }
-    public boolean wantsKeepAlive(HttpRequest request) {
+    public static boolean wantsKeepAlive(HttpRequest request) {
         String connection = request.header("connection");
         boolean hasClose = false;
         boolean hasKeepAlive = false;
@@ -73,12 +73,28 @@ public final class KeepAliveManager {
             }
         }
         if (hasClose) {
-            return false;                       // close always wins
+            return false;                       
         }
         if ("HTTP/1.1".equals(request.httpVersion())) {
-            return true;                        // persistent by default
+            return true;                        
         }
-        return hasKeepAlive;                    // HTTP/1.0 needs an explicit opt-in
+        return hasKeepAlive;                    
+    }
+    public static void checkBodyFraming(HttpRequest request) throws MalformedRequestException {
+        if (request.header("transfer-encoding") != null) {
+            throw new MalformedRequestException("Transfer-Encoding request bodies are not supported", 501);
+        }
+        String cl = request.header("content-length");
+        if (cl == null) {
+            return;
+        }
+        String v = cl.trim();
+        if (!v.matches("[0-9]{1,18}")) {          // also rejects "5, 5" (duplicate header)
+            throw new MalformedRequestException("invalid Content-Length", 400);
+        }
+        if (!v.matches("0+")) {
+            throw new MalformedRequestException("request bodies are not supported", 413);
+        }
     }
     public boolean isRequestQuotaReached(int served) {
         return served >= maxRequests;
@@ -109,7 +125,7 @@ public final class KeepAliveManager {
         while (it.hasNext()) {
             Map.Entry<SelectionKey, Entry> me = it.next();
             if (me.getValue().lastActiveMillis > cutoff) {
-                break;                          // oldest-first order: everything after is fresher
+                break;                         
             }
             if (expired == null) {
                 expired = new ArrayList<>();
