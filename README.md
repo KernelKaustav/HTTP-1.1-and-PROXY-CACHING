@@ -59,7 +59,10 @@ Java (java.net sockets, java.util.concurrent thread polls, java.nio/Selector for
 - [ ] Benchmarks: cache hit ratio and latency savings
 
 ## Building & running
-
+## Default Ports
+- ThreadPoolServer: 8080 (override with first arg: java server.ThreadPoolServer 9091 50)
+- EventLoopServer: 8081
+- LoadTester/SweepRunner: targets port 9091 by default (override with first arg)
 ```bash
 # from repo root
 javac -d bin $(find src -name "*.java")
