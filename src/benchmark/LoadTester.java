@@ -24,6 +24,17 @@ public class LoadTester {
         ExecutorService clientPool = Executors.newFixedThreadPool(concurrency);
         AtomicInteger errors = new AtomicInteger(0);
         List<Future<Long>> futures = new ArrayList<>(totalRequests);
+System.out.println("Warming up...");
+ExecutorService warmupPool = Executors.newFixedThreadPool(concurrency);
+AtomicInteger warmupErrors = new AtomicInteger(0);
+List<Future<Long>> warmupFutures = new ArrayList<>(concurrency);
+for (int i = 0; i < concurrency; i++) {
+    warmupFutures.add(warmupPool.submit(
+        () -> LoadTesterInternal.sendOneRequest(host, port, warmupErrors)));
+}
+for (Future<Long> f : warmupFutures) f.get();
+warmupPool.shutdown();
+System.out.println("Warm-up done. Starting timed run...");
 
         long wallClockStart = System.nanoTime();
         for (int i = 0; i < totalRequests; i++) {
