@@ -103,13 +103,26 @@ public final class RequestParser {
             throw new MalformedRequestException("empty request line", 400);
         }
 
+        // Same limits as the blocking parse(InputStream) path. Without these a
+        // whole oversized head arriving in ONE read slipped through the event
+        // loop (served 404/200 instead of 414/431), because ConnectionState
+        // only checks sizes while the head terminator has not yet been seen.
+        if (lines.get(0).length() > MAX_REQUEST_LINE_LENGTH) {
+            throw new MalformedRequestException("line exceeds " + MAX_REQUEST_LINE_LENGTH + " bytes", 414);
+        }
+
         StartLine startLine = parseStartLineText(lines.get(0));
 
         HttpHeaders headers = new HttpHeaders();
+        int totalHeaderBytes = 0;
         for (int i = 1; i < lines.size(); i++) {
             String line = lines.get(i);
             if (line.isEmpty()) {
                 continue;
+            }
+            totalHeaderBytes += line.length();
+            if (line.length() > MAX_TOTAL_HEADER_LENGTH || totalHeaderBytes > MAX_TOTAL_HEADER_LENGTH) {
+                throw new MalformedRequestException("header block too large", 431);
             }
             if (headers.size() >= MAX_HEADER_COUNT) {
                 throw new MalformedRequestException("too many headers", 431);
