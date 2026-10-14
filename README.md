@@ -47,6 +47,7 @@ libraries. Python (matplotlib, pandas) for experiment plotting only.
 ├── AI-USE.md     # disclosure log of AI tool usage (required by the assignment)
 └── README.md
 ```
+> Note: The work schedule references HttpRequestParser.java and HttpRequestParser-related files — the actual implementation uses RequestParser.java (same functionality, different naming convention adopted during implementation).
 
 
 ## Building
