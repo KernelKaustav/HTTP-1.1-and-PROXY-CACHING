@@ -25,7 +25,8 @@ import java.util.Map;
  *    contain CR, LF or NUL (otherwise a header value built from user input
  *    could inject a second response - "response splitting");
  *  - factories for the error responses owned by the parsing layer:
- *    400, 404, 405 (with the mandatory Allow header), 414, 431;
+ *    400, 404, 405 (with the mandatory Allow header), 414, 431,
+ *    500 (internal server error) and 505 (version not supported);
  *  - read accessors so tests and other modules can inspect a response.
  */
 public final class HttpResponse {
@@ -84,6 +85,17 @@ public final class HttpResponse {
 
     public static HttpResponse headersTooLarge() {
         return error(StatusCode.HEADER_FIELDS_TOO_LARGE, "Request Header Fields Too Large");
+    }
+
+    /** 500: the handler failed; connection state is unknown, so close it. */
+    public static HttpResponse internalServerError() {
+        return error(StatusCode.INTERNAL_SERVER_ERROR, "Internal Server Error")
+                .header("Connection", "close");
+    }
+
+    /** 505: request used an HTTP version this server doesn't speak. */
+    public static HttpResponse versionNotSupported() {
+        return error(StatusCode.HTTP_VERSION_NOT_SUPPORTED, "HTTP Version Not Supported");
     }
 
     /**
