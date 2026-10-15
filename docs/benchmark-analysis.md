@@ -126,6 +126,14 @@ and the load generator's client threads. Results should be interpreted
 as relative comparisons between configurations rather than absolute
 throughput figures.
 
+## Known Issues
+
+**Status code mismatch:** ThreadPoolServer returns 405 for unknown HTTP 
+methods (e.g. BREW), while EventLoopServer returns 400. Per RFC 7230, 
+an unrecognized method token should return 400 (Bad Request), not 405 
+(Method Not Allowed — which implies the method is recognized but not 
+supported). This will be unified in a future fix by Aniket.
+
 ---
 
 ## Plots
