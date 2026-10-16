@@ -17,6 +17,7 @@ public class EventLoopServer {
     private static final long SELECT_TIMEOUT_MS = 1000L;
     private static final long PAUSE_READS_ABOVE_BYTES = 1L << 20;   // 1 MiB
     private static final boolean VERBOSE = Boolean.getBoolean("eventloop.verbose");
+    private static final long CHUNK_THRESHOLD_BYTES = Long.getLong("eventloop.chunk.threshold", 64L * 1024);
     private final int port;
     private Selector selector;
     private ServerSocketChannel serverChannel;
@@ -24,6 +25,7 @@ public class EventLoopServer {
     private long acceptedCount = 0;
     private long partialWriteCount = 0;
     private long totalBytesWritten = 0;
+    private long chunkedResponseCount = 0;
     private final Map<SelectionKey, OutboundQueue> outbound = new HashMap<>();
     private final KeepAliveManager keepAlive;
     private final RequestHandler handler;
@@ -32,7 +34,7 @@ public class EventLoopServer {
     }
     public EventLoopServer(int port, long idleTimeoutMs, RequestHandler handler) {
         this.port = port;
-        this.handler = handler;
+        this.handler = (handler instanceof RequestDispatcher) ? handler : new RequestDispatcher(handler);
         this.keepAlive = new KeepAliveManager(idleTimeoutMs, KeepAliveManager.DEFAULT_MAX_REQUESTS);
     }
     private static void log(String msg) {
@@ -51,7 +53,8 @@ public class EventLoopServer {
         running = true;
         System.out.println("[EventLoopServer] listening on port " + port
                 + " (keep-alive idle timeout " + keepAlive.idleTimeoutMs() + " ms, max "
-                + keepAlive.maxRequests() + " requests/connection)");
+                + keepAlive.maxRequests() + " requests/connection, chunked above "
+                + (CHUNK_THRESHOLD_BYTES < 0 ? "never" : CHUNK_THRESHOLD_BYTES + " bytes") + ")");
         loop();
     }
     private void loop() throws IOException {
@@ -84,7 +87,6 @@ public class EventLoopServer {
                 handleRead(key);
             }
         } catch (CancelledKeyException e) {
-            // key was cancelled while we were using it
         } catch (IOException | RuntimeException e) {
             log("[EventLoopServer] error, closing connection: " + e);
             closeKey(key);
@@ -209,39 +211,59 @@ public class EventLoopServer {
     }
     private void respondTo(SelectionKey key, byte[] head) throws IOException {
         int served = keepAlive.recordRequest(key);
+        HttpRequest request = null;
         HttpResponse response;
         boolean persistent;
         boolean headOnly = false;
         try {
-            HttpRequest request = RequestParser.parseFromHeadBytes(head);
-            KeepAliveManager.checkBodyFraming(request);      
+            request = RequestParser.parseFromHeadBytes(head);
+            KeepAliveManager.checkBodyFraming(request);
             headOnly = request.method() == HttpMethod.HEAD;
             response = invokeHandler(request);
             persistent = KeepAliveManager.wantsKeepAlive(request)
-                    && !keepAlive.isRequestQuotaReached(served);
+                    && !keepAlive.isRequestQuotaReached(served)
+                    && response.statusCode() < 500;
         } catch (MalformedRequestException e) {
-            response = ResponseWriter.error(e.statusCode(), e.getMessage());
+            response = HttpResponse.forMalformed(e);
             persistent = false;
         }
         keepAlive.applyHeaders(response, persistent, served);
         if (!persistent) {
             keepAlive.markClosing(key);
         }
-        queueResponse(key, ResponseWriter.serialize(response, headOnly));
+        queueResponse(key, encode(request, response, headOnly));
     }
     private HttpResponse invokeHandler(HttpRequest request) {
-        HttpMethod method = request.method();
-        if (method == null) {
-            return ResponseWriter.error(400, "unrecognised method: " + request.rawMethodToken());
-        }
-        if (method != HttpMethod.GET && method != HttpMethod.HEAD) {
-            return ResponseWriter.error(405, "Method Not Allowed").header("Allow", "GET, HEAD");
-        }
         try {
             return handler.handle(request);
         } catch (IOException | RuntimeException e) {
             log("[EventLoopServer] handler failed: " + e);
-            return ResponseWriter.error(500, "Internal Server Error");
+            return HttpResponse.internalServerError();
+        }
+    }
+    private byte[] encode(HttpRequest request, HttpResponse response, boolean headOnly) throws IOException {
+        if (shouldChunk(request, response)) {
+            chunkedResponseCount++;
+            log("[EventLoopServer] chunked response (" + response.header("Content-Length") + " bytes, chunks of " + ChunkedWriter.DEFAULT_CHUNK_SIZE + ") - total chunked: " + chunkedResponseCount);
+            return ChunkedWriter.serialize(request, response, response.bodyBytes(), ChunkedWriter.DEFAULT_CHUNK_SIZE);
+        }
+        return ResponseWriter.serialize(response, headOnly);
+    }
+    private static boolean shouldChunk(HttpRequest request, HttpResponse response) {
+        if (CHUNK_THRESHOLD_BYTES < 0 || request == null || response.statusCode() != 200) {
+            return false;
+        }
+        if (!ChunkedWriter.supportsChunked(request) || response.hasHeader("Transfer-Encoding")) {
+            return false;                       
+        }
+        String declared = response.header("Content-Length");   
+        if (declared == null) {
+            return false;
+        }
+        try {
+            return Long.parseLong(declared.trim()) > CHUNK_THRESHOLD_BYTES;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
     private void closeIdleConnections() {
@@ -297,7 +319,7 @@ public class EventLoopServer {
         } catch (IOException ignored) {
         }
         System.out.println("[EventLoopServer] stopped (bytes written: " + totalBytesWritten
-                + ", partial writes: " + partialWriteCount + ")");
+                + ", partial writes: " + partialWriteCount + ", chunked responses: " + chunkedResponseCount + ")");
     }
     private static final class OutboundQueue {
         private final ArrayDeque<ByteBuffer> buffers = new ArrayDeque<>();
