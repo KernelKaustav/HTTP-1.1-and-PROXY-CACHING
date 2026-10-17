@@ -37,16 +37,17 @@ libraries. Python (matplotlib, pandas) for experiment plotting only.
 ## Repository layout
 
 ```
-.
-├── src/
-│   ├── server/   # core server: socket handling, request/response model, parsing
-│   ├── proxy/    # forward proxy mode + conditional GET handling
-│   └── cache/    # LRU cache implementation
-├── experiments/  # benchmarking / plotting scripts and raw results
-├── docs/         # proposal, design notes, diagrams
-├── AI-USE.md     # disclosure log of AI tool usage (required by the assignment)
-└── README.md
+src/server/    — HTTP parsing, both concurrency models, static/proxy handling
+src/benchmark/ — LoadTester, SweepRunner, LoadTesterInternal
+src/proxy/     — ForwardProxy, LruCache, CachePolicy
+scripts/       — plot_results.py, requirements.txt, run_sweep.sh
+results/       — experiment CSVs and plots
+test/          — TraversalTest, ChunkedEncodingTest, IntegrationTest
+test-site/     — sample static files for testing
+docs/          — proposal, schedule, benchmark analysis
+AI-USE.md      — disclosure log of AI tool usage (required by assignment)
 ```
+
 > Note: The work schedule references HttpRequestParser.java and HttpRequestParser-related files — the actual implementation uses RequestParser.java (same functionality, different naming convention adopted during implementation).
 
 
@@ -72,7 +73,14 @@ java -cp out server.ThreadPoolServer 9091 50
 java -cp out server.EventLoopServer 8081
 
 # Forward proxy (port 8082)
-java -cp out server.ForwardProxy 8082
+java -cp out proxy.ForwardProxy 8082
+
+# Event-loop server (port 8081, idle timeout 5s, serving test-site/)
+java -Deventloop.chunk.threshold=65536 -cp out server.EventLoopServer 8081 5 test-site
+# Bodies above 65536 bytes are sent chunked (HTTP/1.1 only; set to -1 to disable)
+
+# Event-loop sweep
+java -cp out benchmark.SweepRunner localhost 8081 results/eventloop_rps.csv
 
 # Load test (20 concurrent clients, 10 requests each, against port 9091)
 java -cp out benchmark.LoadTester localhost 9091 20 10
@@ -102,7 +110,7 @@ python scripts/plot_results.py
 - [x] Thread-pool concurrency model
 - [x] Event-loop concurrency model (java.nio Selector)
 - [x] Keep-alive — event-loop model
-- [x] Chunked transfer encoding — written and tested
+- [x] Chunked transfer encoding — wired into EventLoopServer for bodies > 64 KB
 - [x] Forward proxy + LRU cache (Cache-Control, no-store, no-cache, max-age)
 - [x] Benchmark harness — LoadTester, SweepRunner, plots
 - [ ] ETag / If-Modified-Since / 304 conditional GET
