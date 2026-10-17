@@ -127,6 +127,16 @@ python scripts/plot_results.py
 | 500 | 1920 | 248 | 294 | 302 |
 | 1000 | 2133 | 483 | 500 | 503 |
 
+
+## Results (event-loop model, same machine)
+| Concurrency | Req/sec | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---|---|---|
+| 10   | 408  | 17  | 45  | 138 |
+| 50   | 975  | 43  | 105 | 129 |
+| 100  | 2575 | 35  | 59  | 71  |
+| 500  | 2056 | 213 | 435 | 537 |
+| 1000 | 3221 | 283 | 518 | 596 |
+
 See `results/plots/` for graphs and `docs/benchmark-analysis.md` for analysis.
 
 ## AI usage
