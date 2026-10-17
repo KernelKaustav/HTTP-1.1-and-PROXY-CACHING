@@ -115,7 +115,7 @@ python scripts/plot_results.py
 - [x] Benchmark harness — LoadTester, SweepRunner, plots
 - [ ] ETag / If-Modified-Since / 304 conditional GET
 - [ ] Cache hit-ratio experiment and plots
-- [ ] Event-loop benchmark runs
+- [X] Event-loop benchmark runs
 
 ## Results (thread-pool model, pool size 50)
 
