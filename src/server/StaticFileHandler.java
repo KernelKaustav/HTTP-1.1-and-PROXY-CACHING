@@ -63,7 +63,7 @@ public class StaticFileHandler implements RequestHandler {
         HttpResponse response = new HttpResponse()
                 .status(200)
                 .header("Content-Type", mimeType)
-                .header("Connection", request.isKeepAlive() ? "keep-alive" : "close");
+                .header("Connection", "close");
 
         if (method == HttpMethod.HEAD) {
             response.header("Content-Length", String.valueOf(fileSize));
