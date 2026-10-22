@@ -118,13 +118,15 @@ which is the core result our proposal claimed to demonstrate.
 
 **Interpretation of the claim:**
 
-Our original claim — "the event-loop model will sustain higher requests/sec
-at high concurrency" — is confirmed. The event-loop wins decisively above
-concurrency=100. The thread-pool wins at low concurrency, which is expected
-and consistent with NIO's design trade-offs. A production server would
-typically use a hybrid approach (a small thread pool feeding an event loop)
-to get the best of both.
-
+Our proposal claimed the event-loop model would sustain higher requests/sec
+and lower tail latency (p95/p99) at high concurrency. The results support
+the first part but not the second. The event loop delivers higher throughput
+at 100 and 1000 clients (2575 vs 1869 and 3221 vs 2133 req/s) and a better
+median latency from 100 clients upward. However, its p99 latency at 500 and
+1000 clients (537 ms and 596 ms) is worse than the thread pool's (302 ms
+and 503 ms). At 500 clients the two models are close on throughput.
+A possible explanation is that one thread serving all connections lets
+individual slow connections wait longer. We did not test this directly.
 ---
 
 ## Design Notes
