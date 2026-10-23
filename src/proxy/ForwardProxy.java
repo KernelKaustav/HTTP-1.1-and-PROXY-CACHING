@@ -44,6 +44,7 @@ public final class ForwardProxy implements RequestHandler {
             "transfer-encoding", "upgrade", "proxy-authorization",
             "proxy-authenticate"));
     private final LruCache<String, CachedResponse> cache;
+    private final CacheStats cacheStats = new CacheStats();
     private final Clock clock;
 
     public ForwardProxy() {
@@ -57,6 +58,11 @@ public final class ForwardProxy implements RequestHandler {
         this.cache = new LruCache<>(cacheCapacity);
         this.clock = Objects.requireNonNull(clock, "clock");
     }
+
+    public CacheStats cacheStats() {
+        return cacheStats;
+    }
+
     @Override
     public HttpResponse handle(HttpRequest request) {
         boolean head = request.method() == HttpMethod.HEAD;
@@ -66,7 +72,6 @@ public final class ForwardProxy implements RequestHandler {
                     .header("Allow", "GET, HEAD");
         }
 
-        // HttpRequest does not yet support request bodies.
         String length = request.header("content-length");
 
         if (request.header("transfer-encoding") != null
@@ -121,8 +126,6 @@ public final class ForwardProxy implements RequestHandler {
                 request.header("cache-control")
         );
 
-        // HEAD, personalized requests and conditional/range requests
-        // pass directly to the origin in this version.
         boolean cacheEligible = !head
                 && permitsCaching(request)
                 && !requestPolicy.noStore();
@@ -133,14 +136,16 @@ public final class ForwardProxy implements RequestHandler {
                     && CachePolicy.parse(request.header("pragma"))
                                 .requiresValidation());
 
+        CachedResponse stale = null;
+
         try {
-            // Validate request headers even when answering from cache.
+
             for (Map.Entry<String, String> field
                     : request.headers().entrySet()) {
                 validateHeader(field.getKey(), field.getValue());
             }
 
-            if (cacheEligible && !forceRefresh) {
+            if (cacheEligible) {
                 synchronized (cache) {
                     CachedResponse stored = cache.get(cacheKey);
 
@@ -154,16 +159,34 @@ public final class ForwardProxy implements RequestHandler {
                         boolean acceptableAge = requestMaxAge < 0
                                 || ageMillis <= requestMaxAge * 1000;
 
-                        if (stored.policy.isFresh(ageMillis)
+                        if (!forceRefresh
+                                && stored.policy.isFresh(ageMillis)
                                 && acceptableAge) {
+                            cacheStats.recordHit();
+
+                            String etag = joined(stored.data.headers, "etag");
+                            String lastModified = joined(
+                                    stored.data.headers,
+                                    "last-modified"
+                            );
+
+                            if (ConditionalGet.isNotModified(
+                                    request,
+                                    etag,
+                                    lastModified
+                            )) {
+                                return ConditionalGet.notModified(
+                                        etag,
+                                        lastModified,
+                                        stored.data.headers
+                                ).header("Age", Long.toString(ageMillis / 1000));
+                            }
+
                             return stored.data.toResponse()
-                                    .header(
-                                            "Age",
-                                            Long.toString(ageMillis / 1000)
-                                    );
+                                    .header("Age", Long.toString(ageMillis / 1000));
                         }
 
-                        cache.remove(cacheKey);
+                        stale = stored;
                     }
                 }
             }
@@ -200,6 +223,11 @@ public final class ForwardProxy implements RequestHandler {
                 excluded.add("content-length");
                 excluded.add("expect");
 
+                if (stale != null) {
+                    excluded.add("if-none-match");
+                    excluded.add("if-modified-since");
+                }
+
                 for (Map.Entry<String, String> field
                         : request.headers().entrySet()) {
                     String name = field.getKey()
@@ -209,6 +237,24 @@ public final class ForwardProxy implements RequestHandler {
                         outgoing.append(field.getKey())
                                 .append(": ")
                                 .append(field.getValue())
+                                .append("\r\n");
+                    }
+                }
+
+                if (stale != null) {
+                    String etag = joined(stale.data.headers, "etag");
+                    String lastModified = joined(
+                            stale.data.headers,
+                            "last-modified"
+                    );
+
+                    if (etag != null && !stale.data.generatedEtag) {
+                        outgoing.append("If-None-Match: ")
+                                .append(etag)
+                                .append("\r\n");
+                    } else if (lastModified != null) {
+                        outgoing.append("If-Modified-Since: ")
+                                .append(lastModified)
                                 .append("\r\n");
                     }
                 }
@@ -234,6 +280,23 @@ public final class ForwardProxy implements RequestHandler {
 
                 long responseTime = clock.millis();
 
+                if (stale != null && data.status == 304) {
+                    data = stale.data.refreshedBy(data);
+                    cacheStats.recordHit();
+                } else if (cacheEligible) {
+                    cacheStats.recordMiss();
+                }
+
+                if (data.status == 200 && !data.headers.containsKey("etag")) {
+                    data.headers.put(
+                            "etag",
+                            new ArrayList<>(Arrays.asList(
+                                    ETagGenerator.generate(data.body)
+                            ))
+                    );
+                    data.generatedEtag = true;
+                }
+
                 if (cacheEligible) {
                     CachePolicy responsePolicy = CachePolicy.parse(
                             joined(data.headers, "cache-control")
@@ -249,17 +312,28 @@ public final class ForwardProxy implements RequestHandler {
                     boolean canCache = data.status == 200
                             && !data.headers.containsKey("set-cookie")
                             && !data.headers.containsKey("vary")
-                            && responsePolicy.isFresh(
-                                    candidate.currentAgeMillis(responseTime)
-                            );
+                            && responsePolicy.allowsSharedStorage();
 
                     if (canCache) {
                         cache.put(cacheKey, candidate);
                     } else {
-                        // Do not leave an older version reusable after
-                        // receiving a new response that prohibits caching.
                         cache.remove(cacheKey);
                     }
+                }
+
+                String etag = joined(data.headers, "etag");
+                String lastModified = joined(data.headers, "last-modified");
+
+                if (ConditionalGet.isNotModified(
+                        request,
+                        etag,
+                        lastModified
+                )) {
+                    return ConditionalGet.notModified(
+                            etag,
+                            lastModified,
+                            data.headers
+                    );
                 }
 
                 return data.toResponse();
@@ -281,7 +355,7 @@ public final class ForwardProxy implements RequestHandler {
         int status;
         String reason;
         Map<String, List<String>> headers;
-        // Skip informational responses, but protocol switching is unsupported.
+
         int informationalCount = 0;
         do {
             String line = readLine(in);
@@ -346,7 +420,7 @@ public final class ForwardProxy implements RequestHandler {
                 throw new IOException("Invalid chunk size", e);
             }
             if (size == 0) {
-                readHeaders(in); // consume trailers; this version does not forward them
+                readHeaders(in);
                 return;
             }
             copyExactly(in, out, size);
@@ -460,8 +534,7 @@ public final class ForwardProxy implements RequestHandler {
 
             if (lower.equals("authorization")
                     || lower.equals("cookie")
-                    || lower.equals("range")
-                    || lower.startsWith("if-")) {
+                    || lower.equals("range")) {
                 return false;
             }
         }
@@ -469,12 +542,6 @@ public final class ForwardProxy implements RequestHandler {
         return true;
     }
 
-    /**
-     * Stores the upstream response data.
-     *
-     * Every client receives a newly constructed HttpResponse because
-     * HttpResponse is mutable.
-     */
     private static final class ResponseData {
 
         final int status;
@@ -483,6 +550,7 @@ public final class ForwardProxy implements RequestHandler {
         final byte[] body;
         final boolean noBody;
         final Long representationLength;
+        boolean generatedEtag;
 
         ResponseData(
                 int status,
@@ -531,11 +599,43 @@ public final class ForwardProxy implements RequestHandler {
 
             return response.header("Connection", "close");
         }
+
+        ResponseData refreshedBy(ResponseData validation) {
+            Map<String, List<String>> refreshedHeaders = new LinkedHashMap<>();
+
+            for (Map.Entry<String, List<String>> field : headers.entrySet()) {
+                refreshedHeaders.put(
+                        field.getKey(),
+                        new ArrayList<>(field.getValue())
+                );
+            }
+
+            for (Map.Entry<String, List<String>> field
+                    : validation.headers.entrySet()) {
+                if (!field.getKey().equals("content-length")
+                        && !field.getKey().equals("transfer-encoding")) {
+                    refreshedHeaders.put(
+                            field.getKey(),
+                            new ArrayList<>(field.getValue())
+                    );
+                }
+            }
+
+            ResponseData refreshed = new ResponseData(
+                    status,
+                    reason,
+                    refreshedHeaders,
+                    body.clone(),
+                    noBody,
+                    representationLength
+            );
+            refreshed.generatedEtag = validation.headers.containsKey("etag")
+                    ? false
+                    : generatedEtag;
+            return refreshed;
+        }
     }
 
-    /**
-     * A cached response plus the information needed to calculate its age.
-     */
     private static final class CachedResponse {
 
         final ResponseData data;
@@ -561,7 +661,7 @@ public final class ForwardProxy implements RequestHandler {
         }
 
         long currentAgeMillis(long now) {
-            // A backwards clock adjustment must not extend freshness.
+
             if (now < receivedAt) {
                 return Long.MAX_VALUE;
             }
@@ -573,10 +673,6 @@ public final class ForwardProxy implements RequestHandler {
         }
     }
 
-    /**
-     * Accounts for the response's existing Age, its Date, and the
-     * time spent obtaining it from the upstream server.
-     */
     private static long initialAge(
             Map<String, List<String>> headers,
             long sentAt,
@@ -602,7 +698,7 @@ public final class ForwardProxy implements RequestHandler {
                 );
 
             } catch (DateTimeParseException | ArithmeticException e) {
-                // Invalid age information: treat as stale.
+
                 return Long.MAX_VALUE;
             }
         }
@@ -652,9 +748,22 @@ public final class ForwardProxy implements RequestHandler {
         if (port < 1 || port > 65535 || workers < 1) {
             throw new IllegalArgumentException("Use a valid port and positive worker count.");
         }
-        ThreadPoolServer server = new ThreadPoolServer(port, workers, new ForwardProxy());
+        ForwardProxy proxy = new ForwardProxy();
+        ThreadPoolServer server = new ThreadPoolServer(port, workers, proxy);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { server.stop(); } catch (IOException e) { System.err.println(e.getMessage()); }
+            try {
+                server.stop();
+            } catch (IOException e) {
+                System.err.println(e.getMessage());
+            }
+
+            CacheStats stats = proxy.cacheStats();
+            System.out.printf(
+                    "Cache hits: %d, misses: %d, hit rate: %.2f%%%n",
+                    stats.hits(),
+                    stats.misses(),
+                    stats.hitRate() * 100
+            );
         }));
         server.start();
     }
