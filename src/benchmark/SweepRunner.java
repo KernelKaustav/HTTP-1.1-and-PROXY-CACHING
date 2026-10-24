@@ -1,57 +1,96 @@
 package benchmark;
+
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
-public class SweepRunner{
-     public static void main(String[] args) throws Exception {
+
+/**
+ * Runs the concurrency sweep (10/50/100/500/1000 clients) and writes a CSV.
+ *
+ * Usage: SweepRunner [host] [port] [outputCsv] [repeats]
+ *
+ * Methodology fixes over the first version:
+ *  1. A global warm-up (JIT + connection path) runs before ANY timed level.
+ *     Without it the first levels measure a cold JVM, which made the
+ *     event loop look slower at 10 and 50 clients.
+ *  2. Every level gets its own short warm-up, then `repeats` timed runs.
+ *     The CSV row is the run with the MEDIAN requests/sec, so one noisy
+ *     run cannot decide the comparison. (Run-to-run spread on this
+ *     machine was about +/-15%.)
+ *  3. The output folder is created if missing.
+ * The CSV columns are unchanged, so plot_results.py keeps working.
+ */
+public class SweepRunner {
+    private static final int[] CONCURRENCY_LEVELS = {10, 50, 100, 500, 1000};
+    private static final int REQUESTS_PER_CLIENT = 20;
+    private static final int GLOBAL_WARMUP_REQUESTS = 3000;
+
+    public static void main(String[] args) throws Exception {
         String host = args.length > 0 ? args[0] : "localhost";
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 9091;
-        String outputCsv = args.length > 2 ? args[2] : "results/threadpool_sweep.csv";
-        int[] concurrencyLevels= {10, 50, 100, 500, 1000};
-        int requestPerClient= 20;
-        try(PrintWriter csv= new PrintWriter(new FileWriter(outputCsv))){
+        String outputCsv = args.length > 2 ? args[2] : "results/sweep.csv";
+        int repeats = args.length > 3 ? Integer.parseInt(args[3]) : 3;
+
+        File parent = new File(outputCsv).getAbsoluteFile().getParentFile();
+        if (parent != null) parent.mkdirs();
+
+        System.out.println("Global warm-up (" + GLOBAL_WARMUP_REQUESTS + " requests)...");
+        runOneLevel(host, port, 50, GLOBAL_WARMUP_REQUESTS / 50);
+        Thread.sleep(2000);
+
+        try (PrintWriter csv = new PrintWriter(new FileWriter(outputCsv))) {
             csv.println("concurrency,requests_per_client,total_requests,successful,errors,requests_per_sec,p50_ms,p95_ms,p99_ms");
-            for(int concurrency: concurrencyLevels){
-                System.out.println("Running sweep at concurrency=" + concurrency+ "...");
-                SweepResult result= runOneLevel(host,port,concurrency,requestPerClient);
-                 csv.printf("%d,%d,%d,%d,%d,%.2f,%d,%d,%d%n",
-                        concurrency, requestPerClient, result.totalRequests,
-                        result.successful, result.errors, result.requestsPerSec,
-                        result.p50, result.p95, result.p99);
-                        csv.flush();
-                         System.out.printf("  -> %.2f req/s, p50=%dms, p95=%dms, p99=%dms%n", result.requestsPerSec, result.p50, result.p95, result.p99);
-                         Thread.sleep(2000);
+            for (int concurrency : CONCURRENCY_LEVELS) {
+                runOneLevel(host, port, concurrency, 5);          // per-level warm-up, discarded
+                List<SweepResult> runs = new ArrayList<>();
+                for (int r = 1; r <= repeats; r++) {
+                    System.out.println("Concurrency=" + concurrency + " run " + r + "/" + repeats + "...");
+                    SweepResult res = runOneLevel(host, port, concurrency, REQUESTS_PER_CLIENT);
+                    System.out.printf("  -> %.2f req/s, p50=%dms, p95=%dms, p99=%dms, errors=%d%n",
+                            res.requestsPerSec, res.p50, res.p95, res.p99, res.errors);
+                    runs.add(res);
+                    Thread.sleep(2000);
+                }
+                runs.sort(Comparator.comparingDouble((SweepResult x) -> x.requestsPerSec));
+                SweepResult median = runs.get(runs.size() / 2);
+                csv.printf("%d,%d,%d,%d,%d,%.2f,%d,%d,%d%n",
+                        concurrency, REQUESTS_PER_CLIENT, median.totalRequests,
+                        median.successful, median.errors, median.requestsPerSec,
+                        median.p50, median.p95, median.p99);
+                csv.flush();
             }
         }
         System.out.println("Sweep complete. Results written to " + outputCsv);
+    }
 
-}
- private static SweepResult runOneLevel(String host, int port, int concurrency, int requestsPerClient) throws Exception{
-    int totalRequests= concurrency*requestsPerClient;
-    ExecutorService clientPool= Executors.newFixedThreadPool(concurrency);
-    AtomicInteger errors= new AtomicInteger(0);
-     List<Future<Long>> futures = new ArrayList<>(totalRequests);
-     long wallClockStart= System.nanoTime();
-     for(int i=0;i<totalRequests;i++){
-        futures.add(clientPool.submit(() -> LoadTesterInternal.sendOneRequest(host, port, errors)));
-     }
-     List<Long> latenciesMs = new ArrayList<>(totalRequests);
-     for(Future<Long> f: futures){
-        long latency= f.get();
-        if(latency>=0) latenciesMs.add(latency);
-     }
-     long wallClockEnd= System.nanoTime();
-     clientPool.shutdown();
-     double totalSeconds= (wallClockEnd-wallClockStart)/1_000_000_000.0;
-     Collections.sort(latenciesMs);
-       SweepResult result = new SweepResult();
+    private static SweepResult runOneLevel(String host, int port, int concurrency, int requestsPerClient) throws Exception {
+        int totalRequests = concurrency * requestsPerClient;
+        ExecutorService clientPool = Executors.newFixedThreadPool(concurrency);
+        AtomicInteger errors = new AtomicInteger(0);
+        List<Future<Long>> futures = new ArrayList<>(totalRequests);
+        long wallClockStart = System.nanoTime();
+        for (int i = 0; i < totalRequests; i++) {
+            futures.add(clientPool.submit(() -> LoadTesterInternal.sendOneRequest(host, port, errors)));
+        }
+        List<Long> latenciesMs = new ArrayList<>(totalRequests);
+        for (Future<Long> f : futures) {
+            long latency = f.get();
+            if (latency >= 0) latenciesMs.add(latency);
+        }
+        long wallClockEnd = System.nanoTime();
+        clientPool.shutdown();
+        double totalSeconds = (wallClockEnd - wallClockStart) / 1_000_000_000.0;
+        Collections.sort(latenciesMs);
+        SweepResult result = new SweepResult();
         result.totalRequests = totalRequests;
         result.successful = latenciesMs.size();
         result.errors = errors.get();
@@ -60,16 +99,18 @@ public class SweepRunner{
         result.p95 = percentile(latenciesMs, 95);
         result.p99 = percentile(latenciesMs, 99);
         return result;
- }
- private static long percentile(List<Long> sortedLatencies, int p){
-    if(sortedLatencies.isEmpty()) return 0;
-    int index= (int)Math.ceil(p/100.0*sortedLatencies.size())-1;
-    index= Math.max(0,Math.min(index,sortedLatencies.size()-1));
-    return sortedLatencies.get(index);
- }
- private static class SweepResult{
-    int totalRequests, successful, errors;
-    double requestsPerSec;
-    long p50, p95, p99;
- }
+    }
+
+    private static long percentile(List<Long> sorted, int p) {
+        if (sorted.isEmpty()) return 0;
+        int index = (int) Math.ceil(p / 100.0 * sorted.size()) - 1;
+        index = Math.max(0, Math.min(index, sorted.size() - 1));
+        return sorted.get(index);
+    }
+
+    private static class SweepResult {
+        int totalRequests, successful, errors;
+        double requestsPerSec;
+        long p50, p95, p99;
+    }
 }
