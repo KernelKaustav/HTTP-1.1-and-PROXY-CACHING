@@ -31,11 +31,14 @@ from context switching among 50 workers and up to 1,000 client threads sharing o
 machine, but we did not isolate the cause. At 1,000 clients 488 of 20,000 requests
 failed (2.4%). Each level is a single run, so differences of 15–20% are within noise.
 
-**Results (pool size 50).** Throughput rises from 629 req/s at 10 clients to
-about 1,900 req/s at 100 and then flattens (2,133 req/s at 1000 clients),
-while p50 latency grows from 8 ms to 483 ms. Beyond about 100 clients the
-50 workers are saturated and connections queue. A pool of 20 matches pool 50
-up to 500 clients and falls behind at 1000 (p99 643 ms vs 503 ms).
+**Results (pool size 50).** With a warm JVM, throughput is highest at 10 clients
+(2,647 req/s, p50 3 ms) and settles near 1,600 req/s from 100 to 500 clients, while
+p50 latency grows to 309 ms at 500 clients, consistent with Little's law (500 / 1,601
+≈ 312 ms). At 1,000 clients 488 of 20,000 requests failed (2.4%). A pool of 20 does not
+change throughput consistently, but its tail is worse: at 500 clients p99 was 551 ms
+against 324 ms, and at 1,000 clients 12.7% of requests failed against 2.4%. Each 
+configuration was run once, and differences below about 20% are within run-to-run
+noise.
 
 **Limitations.** The server and load generator share one machine, so
 results are relative comparisons rather than absolute capacity. The thread

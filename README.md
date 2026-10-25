@@ -122,13 +122,15 @@ python scripts/plot_results.py
 
 ## Results (thread-pool model, pool size 50)
 
-| Concurrency | Req/sec | p50 (ms) | p95 (ms) | p99 (ms) |
-|---|---|---|---|---|
-| 10 | 629 | 8 | 17 | 123 |
-| 50 | 1622 | 28 | 39 | 49 |
-| 100 | 1869 | 51 | 58 | 64 |
-| 500 | 1920 | 248 | 294 | 302 |
-| 1000 | 2133 | 483 | 500 | 503 |
+Method: global warm-up (3,000 requests), per-level warm-up, 90 s cooldown between runs, one timed run per level (20 requests per client), listen backlog 1024. Latency runs from connect to the last body byte; only HTTP 200 counts as success. Machine: <CPU model, cores/threads, RAM, Windows version, Java version>; server and load generator on the same machine.
+
+| Concurrency | Req/sec | p50 (ms) | p95 (ms) | p99 (ms) | Errors |
+|---|---|---|---|---|---|
+| 10 | 2647 | 3 | 5 | 7 | 0 |
+| 50 | 1769 | 26 | 32 | 46 | 0 |
+| 100 | 1575 | 62 | 70 | 72 | 0 |
+| 500 | 1601 | 309 | 320 | 324 | 0 |
+| 1000 | 1979 | 535 | 607 | 621 | 488 of 20,000 |
 
 
 ## Results (event-loop model, same machine)
