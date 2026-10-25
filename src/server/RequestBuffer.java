@@ -7,49 +7,48 @@ import java.util.List;
 /**
  * Per-connection buffering state machine for the non-blocking event loop.
  *
- * A non-blocking channel's read() returns whatever bytes the kernel
- * happens to have right now — that could be 3 bytes of a header line
- * (partial arrival), or it could be two or three complete requests back
- * to back if the client pipelined them and the kernel delivered them in
- * one chunk (pipelining). Either way, OP_READ fires once and the
- * callback must return quickly — it can't block waiting for "the rest"
- * the way RequestParser.parse(InputStream) can on a blocking socket.
+ * A non-blocking channel's read() returns whatever bytes the kernel has right
+ * now: possibly 3 bytes of a header line (partial arrival), possibly several
+ * complete requests back to back (pipelining). OP_READ fires once and the
+ * callback must return quickly, so it cannot block waiting for "the rest" the
+ * way RequestParser.parse(InputStream) can.
  *
- * Usage, one RequestBuffer per connection, kept alive across OP_READ
- * events for that connection's lifetime:
+ * Usage, one RequestBuffer per connection, kept across OP_READ events:
  *
- *   RequestBuffer rb = new RequestBuffer();
- *   // on each OP_READ:
- *   byte[] chunk = ...;               // bytes just read from the channel
- *   int n = ...;                      // how many of them are valid
  *   rb.append(chunk, 0, n);
  *   while (rb.hasCompleteRequest()) {
  *       HttpRequest req = rb.extractRequest();
  *       // dispatch req, write a response ...
  *   }
- *   // loop condition handles both partial arrival (loop body never runs
- *   // until enough bytes accumulate across several OP_READ events) and
- *   // pipelining (loop body runs more than once per OP_READ if this
- *   // read's bytes contained several complete requests).
  *
- * Only parses the start line + headers, same scope as RequestParser for
- * now — request bodies are a separate, later piece of work.
+ * The loop handles both cases: with partial arrival the body never runs until
+ * enough bytes have accumulated over several reads; with pipelining it runs once
+ * per complete request in this read.
+ *
+ * If hasCompleteRequest() or extractRequest() throws MalformedRequestException
+ * the connection must be answered with that status and then CLOSED: the buffer
+ * is left as-is and its byte stream can no longer be trusted.
+ *
+ * Scope: start line + headers only (request bodies are not supported yet).
  */
 public final class RequestBuffer {
 
     private static final int INITIAL_CAPACITY = 4096;
-    private static final int MAX_REQUEST_LINE_LENGTH = 8192;  // -> 414
-    private static final int MAX_HEADER_BLOCK_LENGTH = 16384; // -> 431, covers start line + all headers
-    private static final int MAX_HEADER_COUNT = 100;          // -> 431
+
+    // Limits are shared with RequestParser so the blocking and non-blocking
+    // paths can never drift apart.
+    private static final int MAX_REQUEST_LINE_LENGTH = RequestParser.MAX_REQUEST_LINE_LENGTH; // -> 414
+    private static final int MAX_HEADER_BLOCK_LENGTH = RequestParser.MAX_TOTAL_HEADER_LENGTH; // -> 431, whole head
+    private static final int MAX_HEADER_COUNT = RequestParser.MAX_HEADER_COUNT;               // -> 431
 
     private byte[] buf = new byte[INITIAL_CAPACITY];
     private int len = 0;        // buf[0..len) = bytes received but not yet consumed by extractRequest()
-    private int searchFrom = 0; // how far we've already scanned for the terminator without finding it
+    private int searchFrom = 0; // everything before this index was already scanned without finding the terminator
 
-    /** Feeds newly-read bytes into the buffer. Safe to call with length 0 (a read that returned nothing new). */
+    /** Feeds newly-read bytes into the buffer. Safe to call with length 0. */
     public void append(byte[] data, int offset, int length) {
         if (length <= 0) {
-            return;
+            return; // a read that returned nothing new
         }
         ensureCapacity(len + length);
         System.arraycopy(data, offset, buf, len, length);
@@ -57,50 +56,62 @@ public final class RequestBuffer {
     }
 
     /**
-     * True if the buffer currently holds at least one complete request
-     * (start line + headers, terminated by a blank line). Does not
-     * consume anything, so it's safe to call repeatedly — this is what
-     * lets a caller loop "while (hasCompleteRequest()) extractRequest()"
-     * to drain every pipelined request a single read delivered.
+     * True if the buffer holds at least one complete request head (terminated
+     * by a blank line). Consumes nothing, so it is safe to call repeatedly;
+     * that is what makes "while (hasCompleteRequest()) extractRequest()" drain
+     * every pipelined request.
      *
-     * @throws MalformedRequestException if the buffered bytes already
-     *         violate a size limit (too-long request line, too-large
-     *         header block) even before a terminator has been found —
-     *         e.g. for a slow client trickling bytes that will never
-     *         total to a valid request, we must not just grow the
-     *         buffer forever waiting for one.
+     * @throws MalformedRequestException if the bytes buffered so far already
+     *         break a size limit even though no terminator has arrived (a slow
+     *         client trickling bytes must not make the buffer grow forever).
      */
     public boolean hasCompleteRequest() throws MalformedRequestException {
         return findHeaderBlockEnd() >= 0;
     }
 
     /**
-     * Parses and removes exactly one complete request's bytes from the
-     * front of the buffer. Call only after hasCompleteRequest() returned
-     * true for this exact state (don't call speculatively). Any leftover
-     * bytes — a second pipelined request, complete or partial — remain
-     * buffered for the next hasCompleteRequest()/extractRequest() pair.
+     * Parses and removes exactly one complete request from the front of the
+     * buffer. Call only after hasCompleteRequest() returned true. Leftover
+     * bytes (the next pipelined request, whole or partial) stay buffered.
      */
     public HttpRequest extractRequest() throws MalformedRequestException {
         int blockEnd = findHeaderBlockEnd();
         if (blockEnd < 0) {
+            // Programming error in the caller, not a bad client: don't send a status for it.
             throw new IllegalStateException(
-                "extractRequest() called with no complete request buffered — check hasCompleteRequest() first");
+                "extractRequest() called with no complete request buffered - check hasCompleteRequest() first");
         }
 
         String block = new String(buf, 0, blockEnd, StandardCharsets.ISO_8859_1);
         List<String> lines = splitOnCrlf(block);
-        if (lines.isEmpty()) {
+
+        // RFC 7230 3.5: ignore one empty line before the request line (same rule as
+        // RequestParser.parse). A second empty line, or nothing at all, is a 400.
+        int first = (!lines.isEmpty() && lines.get(0).isEmpty()) ? 1 : 0;
+        if (lines.size() <= first || lines.get(first).isEmpty()) {
             throw new MalformedRequestException("empty request line", 400);
         }
 
-        RequestParser.StartLine startLine = RequestParser.parseStartLineText(lines.get(0));
+        // Size limits on a head that arrived COMPLETE. findHeaderBlockEnd() only
+        // applies them while the terminator is still missing, so a whole oversized
+        // head delivered in one read would otherwise be accepted.
+        // The request line is checked first so the status (414) matches what
+        // the blocking parser reports for the same bytes.
+        String requestLine = lines.get(first);
+        if (requestLine.length() > MAX_REQUEST_LINE_LENGTH) {
+            throw new MalformedRequestException("request line too long", 414);
+        }
+        if (blockEnd > MAX_HEADER_BLOCK_LENGTH) {
+            throw new MalformedRequestException("header block too large", 431);
+        }
+
+        RequestParser.StartLine startLine = RequestParser.parseStartLineText(requestLine);
 
         HttpHeaders headers = new HttpHeaders();
-        for (int i = 1; i < lines.size(); i++) {
+        for (int i = first + 1; i < lines.size(); i++) {
             String line = lines.get(i);
             if (line.isEmpty()) {
-                continue; // the blank line that terminates the header block
+                continue; // the blank line that terminates the head
             }
             if (headers.size() >= MAX_HEADER_COUNT) {
                 throw new MalformedRequestException("too many headers", 431);
@@ -108,20 +119,25 @@ public final class RequestBuffer {
             RequestParser.addHeaderLine(line, headers);
         }
 
+        // Only consume once parsing succeeded: bytes are never dropped on an error path.
         consume(blockEnd);
 
         return new HttpRequest(startLine.method, startLine.rawMethodToken, startLine.target,
                                 startLine.version, headers.asMap());
     }
 
-    // -- internal plumbing --
+    // ------------------------------------------------------------------
+    // internal plumbing
+    // ------------------------------------------------------------------
 
     /**
-     * Index just past the terminating "\r\n\r\n" if the buffer contains
-     * one, else -1. Remembers how far it already scanned (searchFrom) so
-     * repeated calls across many small appends don't rescan from byte 0
-     * every time — important since the event loop may call this after
-     * every single OP_READ on a slow connection.
+     * Index just past the first "\r\n\r\n" in the buffer, or -1 if there is none
+     * yet. Remembers how far it already scanned (searchFrom) so a slow
+     * connection delivering many tiny reads does not rescan from byte 0 each time.
+     *
+     * Only CRLFCRLF ends a head here. The blocking parser also tolerates bare LF;
+     * this path is stricter, which is safe (a bare-LF client just never gets a
+     * request completed and hits the size limit / timeout).
      */
     private int findHeaderBlockEnd() throws MalformedRequestException {
         for (int i = searchFrom; i + 4 <= len; i++) {
@@ -129,18 +145,21 @@ public final class RequestBuffer {
                 return i + 4;
             }
         }
-        // Not found yet. Remember that everything up to the last 3 bytes
-        // has been checked — a terminator straddling the old/new boundary
-        // is the only thing the next append() could introduce there.
+
+        // Not found. Everything except the last 3 bytes has been checked; a
+        // terminator split across the old/new boundary can only start in those 3.
         searchFrom = Math.max(0, len - 3);
 
+        // Terminator still missing but too many bytes already: this head can never
+        // become valid, so fail now instead of buffering until memory runs out.
         if (len > MAX_HEADER_BLOCK_LENGTH) {
             throw new MalformedRequestException("header block too large", 431);
         }
+        // No line ending at all in more bytes than a request line may have -> 414.
         if (indexOfCrlf(0) < 0 && len > MAX_REQUEST_LINE_LENGTH) {
             throw new MalformedRequestException("request line too long", 414);
         }
-        return -1;
+        return -1; // just incomplete: wait for more bytes
     }
 
     private int indexOfCrlf(int from) {
@@ -152,6 +171,7 @@ public final class RequestBuffer {
         return -1;
     }
 
+    /** Splits a head (which ends in CRLF) into lines, without the CRLFs. */
     private List<String> splitOnCrlf(String block) {
         List<String> lines = new ArrayList<>();
         int start = 0;
@@ -164,12 +184,9 @@ public final class RequestBuffer {
     }
 
     /**
-     * Discards the first n bytes (one fully-extracted request) and
-     * shifts any remainder — e.g. the start of the next pipelined
-     * request — to the front of the buffer. This is the piece that
-     * makes pipelining work: without compaction, a second request
-     * delivered in the same read as the first would be silently
-     * dropped instead of staying buffered for the next extractRequest().
+     * Discards the first n bytes (one extracted request) and shifts the rest to
+     * the front. Without this compaction a second request delivered in the same
+     * read would be lost instead of waiting for the next extractRequest().
      */
     private void consume(int n) {
         int remaining = len - n;
@@ -177,9 +194,10 @@ public final class RequestBuffer {
             System.arraycopy(buf, n, buf, 0, remaining);
         }
         len = remaining;
-        searchFrom = 0; // next request starts its terminator scan fresh
+        searchFrom = 0; // the next request starts its terminator scan from scratch
     }
 
+    /** Doubles the array until it can hold `needed` bytes. */
     private void ensureCapacity(int needed) {
         if (needed <= buf.length) {
             return;

@@ -218,6 +218,10 @@ public class ParserFuzzTest {
         c.add(new Case("101 headers -> 431", manyHeaders(101), 431));
         c.add(new Case("50 x 400-byte headers (20 KB total) -> 431", bigHeaderBlock(50, 400), 431));
 
+        c.add(new Case("one leading blank line is ignored", "\r\nGET / HTTP/1.1\r\n\r\n", "GET", "/", "HTTP/1.1"));
+        c.add(new Case("space before header colon", "GET / HTTP/1.1\r\nHost : x\r\n\r\n", 400));
+        c.add(new Case("space inside header name", "GET / HTTP/1.1\r\nBad Name: x\r\n\r\n", 400));
+
         return c;
     }
 
