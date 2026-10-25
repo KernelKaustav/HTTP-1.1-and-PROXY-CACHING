@@ -1,84 +1,71 @@
+"""Plots for the thread-pool vs event-loop comparison.
+Run from the repo root:  python scripts/plot_results.py
+Reads results/threadpool_rps.csv (pool 50), results/threadpool_rps_pool20.csv
+and results/eventloop_rps.csv. Missing files are skipped, not fatal."""
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 
-CSV_POOL50  = "results/threadpool_rps.csv"
-CSV_POOL20  = "results/threadpool_rps_pool20.csv"
-OUT_DIR     = "results/plots"
-os.makedirs(OUT_DIR, exist_ok=True)
-df50 = pd.read_csv(CSV_POOL50)
-df20 = pd.read_csv(CSV_POOL20)
-plt.rcParams.update({
-    "figure.dpi":       150,
-    "font.family":      "DejaVu Sans",
-    "axes.spines.top":  False,
-    "axes.spines.right":False,
-    "axes.grid":        True,
-    "grid.linestyle":   "--",
-    "grid.alpha":       0.4,
-})
-fig, ax = plt.subplots(figsize=(9, 5))
-ax.plot(df50["concurrency"], df50["requests_per_sec"],
-        marker="o", linewidth=2, color="#2563eb", label="Pool size = 50")
-ax.plot(df20["concurrency"], df20["requests_per_sec"],
-        marker="s", linewidth=2, color="#dc2626", label="Pool size = 20",
-        linestyle="--")
-ax.set_xlabel("Concurrent clients", fontsize=11)
-ax.set_ylabel("Requests / second", fontsize=11)
-ax.set_title("Thread-Pool Server: Throughput vs Concurrency", fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
-ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
-for _, row in df50.iterrows():
-    ax.annotate(f"{row['requests_per_sec']:.0f}",
-                xy=(row["concurrency"], row["requests_per_sec"]),
-                xytext=(0, 8), textcoords="offset points",
-                ha="center", fontsize=8, color="#2563eb")
+OUT = "results/plots"
+os.makedirs(OUT, exist_ok=True)
+plt.rcParams.update({"figure.dpi": 150, "axes.spines.top": False,
+                     "axes.spines.right": False, "axes.grid": True,
+                     "grid.linestyle": "--", "grid.alpha": 0.4})
 
-plt.tight_layout()
-out = os.path.join(OUT_DIR, "rps_vs_concurrency.png")
-plt.savefig(out)
-plt.close()
-print(f"Saved: {out}")
-fig, ax = plt.subplots(figsize=(9, 5))
-ax.plot(df50["concurrency"], df50["p50_ms"],
-        marker="o", linewidth=2, color="#16a34a", label="p50 (median)")
-ax.plot(df50["concurrency"], df50["p95_ms"],
-        marker="s", linewidth=2, color="#d97706", label="p95")
-ax.plot(df50["concurrency"], df50["p99_ms"],
-        marker="^", linewidth=2, color="#dc2626", label="p99")
-ax.set_xlabel("Concurrent clients", fontsize=11)
-ax.set_ylabel("Latency (ms)", fontsize=11)
-ax.set_title("Thread-Pool Server: Latency Percentiles vs Concurrency\n(pool size = 50)",
-             fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
-ax.fill_between(df50["concurrency"], df50["p50_ms"], df50["p99_ms"],
-                alpha=0.08, color="#dc2626", label="_nolegend_")
-plt.tight_layout()
-out = os.path.join(OUT_DIR, "latency_percentiles.png")
-plt.savefig(out)
-plt.close()
-print(f"Saved: {out}")
-fig, ax = plt.subplots(figsize=(9, 5))
+def load(path):
+    return pd.read_csv(path) if os.path.exists(path) else None
 
-ax.plot(df50["concurrency"], df50["p99_ms"],
-        marker="o", linewidth=2, color="#2563eb", label="Pool size = 50 (p99)")
-ax.plot(df20["concurrency"], df20["p99_ms"],
-        marker="s", linewidth=2, color="#dc2626", label="Pool size = 20 (p99)",
-        linestyle="--")
-ax.set_xlabel("Concurrent clients", fontsize=11)
-ax.set_ylabel("p99 Latency (ms)", fontsize=11)
-ax.set_title("Thread-Pool Server: p99 Tail Latency vs Concurrency\n(pool size 50 vs 20)",
-             fontsize=13, fontweight="bold")
-ax.legend(fontsize=10)
-ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+tp50 = load("results/threadpool_rps.csv")
+tp20 = load("results/threadpool_rps_pool20.csv")
+el = load("results/eventloop_rps.csv")
+series = [(tp50, "Thread-pool (50)", "#2563eb", "o", "-"),
+          (tp20, "Thread-pool (20)", "#93c5fd", "s", "--"),
+          (el, "Event-loop", "#dc2626", "^", "-")]
+
+def plot(column, ylabel, title, fname, log=False):
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for df, label, color, marker, ls in series:
+        if df is None:
+            continue
+        ax.plot(df["concurrency"], df[column], marker=marker, ls=ls,
+                lw=2, color=color, label=label)
+    ax.set_xscale("log")
+    ax.set_xticks([10, 50, 100, 500, 1000])
+    ax.set_xticklabels(["10", "50", "100", "500", "1000"])
+    if log:
+        ax.set_yscale("log")
+    ax.set_xlabel("Concurrent clients")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontweight="bold")
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUT, fname))
+    plt.close()
+    print("Saved", os.path.join(OUT, fname))
+
+plot("requests_per_sec", "Requests / second",
+     "Throughput vs concurrency: thread-pool vs event-loop", "rps_vs_concurrency.png")
+plot("p50_ms", "p50 latency (ms)", "Median latency", "p50_comparison.png")
+plot("p95_ms", "p95 latency (ms)", "p95 latency", "p95_comparison.png")
+plot("p99_ms", "p99 latency (ms)", "p99 tail latency", "p99_comparison.png")
+
+# percentile spread, one panel per model
+frames = [(tp50, "Thread-pool (50)"), (el, "Event-loop")]
+frames = [(d, n) for d, n in frames if d is not None]
+fig, axes = plt.subplots(1, len(frames), figsize=(6 * len(frames), 4.5), sharey=True)
+if len(frames) == 1:
+    axes = [axes]
+for ax, (df, name) in zip(axes, frames):
+    for col, lab in (("p50_ms", "p50"), ("p95_ms", "p95"), ("p99_ms", "p99")):
+        ax.plot(df["concurrency"], df[col], marker="o", lw=2, label=lab)
+    ax.set_xscale("log")
+    ax.set_xticks([10, 50, 100, 500, 1000])
+    ax.set_xticklabels(["10", "50", "100", "500", "1000"])
+    ax.set_title(name, fontweight="bold")
+    ax.set_xlabel("Concurrent clients")
+    ax.legend()
+axes[0].set_ylabel("Latency (ms)")
 plt.tight_layout()
-out = os.path.join(OUT_DIR, "p99_comparison.png")
-plt.savefig(out)
+plt.savefig(os.path.join(OUT, "latency_percentiles.png"))
 plt.close()
-print(f"Saved: {out}")
-print("\nAll plots written to results/plots/")
-print("Pool-50 data summary:")
-print(df50[["concurrency","requests_per_sec","p50_ms","p95_ms","p99_ms"]].to_string(index=False))
+print("Saved", os.path.join(OUT, "latency_percentiles.png"))
