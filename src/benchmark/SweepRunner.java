@@ -13,28 +13,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Runs the concurrency sweep (10/50/100/500/1000 clients) and writes a CSV.
- *
- * Usage: SweepRunner [host] [port] [outputCsv] [repeats]
- *
- * Methodology fixes over the first version:
- *  1. A global warm-up (JIT + connection path) runs before ANY timed level.
- *     Without it the first levels measure a cold JVM, which made the
- *     event loop look slower at 10 and 50 clients.
- *  2. Every level gets its own short warm-up, then `repeats` timed runs.
- *     The CSV row is the run with the MEDIAN requests/sec, so one noisy
- *     run cannot decide the comparison. (Run-to-run spread on this
- *     machine was about +/-15%.)
- *  3. The output folder is created if missing.
- * The CSV columns are unchanged, so plot_results.py keeps working.
- */
+
 public class SweepRunner {
     private static final int[] CONCURRENCY_LEVELS = {10, 50, 100, 500, 1000};
     private static final int REQUESTS_PER_CLIENT = 20;
     private static final int GLOBAL_WARMUP_REQUESTS = 3000;
+    private static final long COOLDOWN_MS = 90_000; 
 
-    public static void main(String[] args) throws Exception {
+        public static void main(String[] args) throws Exception {
         String host = args.length > 0 ? args[0] : "localhost";
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 9091;
         String outputCsv = args.length > 2 ? args[2] : "results/sweep.csv";
@@ -45,12 +31,13 @@ public class SweepRunner {
 
         System.out.println("Global warm-up (" + GLOBAL_WARMUP_REQUESTS + " requests)...");
         runOneLevel(host, port, 50, GLOBAL_WARMUP_REQUESTS / 50);
-        Thread.sleep(2000);
+        cooldown();
 
         try (PrintWriter csv = new PrintWriter(new FileWriter(outputCsv))) {
             csv.println("concurrency,requests_per_client,total_requests,successful,errors,requests_per_sec,p50_ms,p95_ms,p99_ms");
             for (int concurrency : CONCURRENCY_LEVELS) {
                 runOneLevel(host, port, concurrency, 5);          // per-level warm-up, discarded
+                cooldown();
                 List<SweepResult> runs = new ArrayList<>();
                 for (int r = 1; r <= repeats; r++) {
                     System.out.println("Concurrency=" + concurrency + " run " + r + "/" + repeats + "...");
@@ -58,7 +45,7 @@ public class SweepRunner {
                     System.out.printf("  -> %.2f req/s, p50=%dms, p95=%dms, p99=%dms, errors=%d%n",
                             res.requestsPerSec, res.p50, res.p95, res.p99, res.errors);
                     runs.add(res);
-                    Thread.sleep(2000);
+                    cooldown();
                 }
                 runs.sort(Comparator.comparingDouble((SweepResult x) -> x.requestsPerSec));
                 SweepResult median = runs.get(runs.size() / 2);
@@ -70,6 +57,10 @@ public class SweepRunner {
             }
         }
         System.out.println("Sweep complete. Results written to " + outputCsv);
+    }
+        private static void cooldown() throws InterruptedException {
+        System.out.println("  (cooling down " + COOLDOWN_MS / 1000 + " s so old connections clear)");
+        Thread.sleep(COOLDOWN_MS);
     }
 
     private static SweepResult runOneLevel(String host, int port, int concurrency, int requestsPerClient) throws Exception {
