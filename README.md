@@ -23,10 +23,13 @@ comparing two different concurrency models for handling simultaneous clients.
 
 ## The claim we are testing
 
-The event-loop (epoll/select) concurrency model will sustain higher
+**Hypothesis:** the event-loop (epoll/select) concurrency model sustains higher
 requests/sec and lower tail latency (p95/p99) than the thread-pool model
 as concurrent client count grows, with the gap widening past the point
 where thread count starts to exceed available cores.
+
+**Outcome:** throughput part supported from ~100 clients; tail-latency part
+only partly supported (see `docs/benchmark-analysis.md`, Experiment 4).
 
 ## Stack
 
@@ -79,14 +82,14 @@ java -cp out proxy.ForwardProxy 8082
 java -Deventloop.chunk.threshold=65536 -cp out server.EventLoopServer 8081 5 test-site
 # Bodies above 65536 bytes are sent chunked (HTTP/1.1 only; set to -1 to disable)
 
-# Event-loop sweep
-java -cp out benchmark.SweepRunner localhost 8081 results/eventloop_rps.csv
+# Event-loop sweep (warm-up + median of 3 runs; optional 4th arg = repeats)
+java -cp out benchmark.SweepRunner localhost 8081 results/eventloop_rps.csv 3
 
 # Load test (20 concurrent clients, 10 requests each, against port 9091)
 java -cp out benchmark.LoadTester localhost 9091 20 10
 
 # Automated concurrency sweep — writes CSV to results/
-java -cp out benchmark.SweepRunner localhost 9091 results/threadpool_rps.csv
+java -cp out benchmark.SweepRunner localhost 9091 results/threadpool_rps.csv 3
 
 # Generate plots from CSVs
 python scripts/plot_results.py
@@ -113,9 +116,9 @@ python scripts/plot_results.py
 - [x] Chunked transfer encoding — wired into EventLoopServer for bodies > 64 KB
 - [x] Forward proxy + LRU cache (Cache-Control, no-store, no-cache, max-age)
 - [x] Benchmark harness — LoadTester, SweepRunner, plots
-- [ ] ETag / If-Modified-Since / 304 conditional GET
+- [x] ETag / If-Modified-Since / 304 conditional GET (proxy: `ConditionalGet`, `ETagGenerator`)
 - [ ] Cache hit-ratio experiment and plots
-- [X] Event-loop benchmark runs
+- [x] Event-loop benchmark runs (re-run with warm-up SweepRunner: see results/)
 
 ## Results (thread-pool model, pool size 50)
 
@@ -137,6 +140,7 @@ python scripts/plot_results.py
 | 500  | 2056 | 213 | 435 | 537 |
 | 1000 | 3221 | 283 | 518 | 596 |
 
+Machine used: _state CPU model and core count here_. Numbers are medians of 3 runs.
 See `results/plots/` for graphs and `docs/benchmark-analysis.md` for analysis.
 
 ## AI usage
@@ -149,3 +153,4 @@ module line by line.
 ## Weekly plan
 
 See `docs/CS-30003(P1).docx` for the full 8-week plan and work split.
+
