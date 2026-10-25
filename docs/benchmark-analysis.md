@@ -28,20 +28,7 @@ before timing begins. Server serving static files via StaticFileHandler.
 
 **Interpretation:**
 
-Throughput rises steeply from concurrency 10 to 100, then flattens
-significantly between 100 and 1000. This is the classic thread-pool
-saturation curve: below ~100 concurrent clients, the pool has spare
-threads and handles requests with minimal queuing. Beyond 100, the 50
-threads are all busy and new connections queue in the LinkedBlockingQueue
-— throughput gains diminish because the bottleneck has shifted from
-"not enough concurrent requests" to "not enough threads to process them
-faster."
-
-The p99 spike at concurrency=10 (123ms vs p95=17ms) is a JVM startup
-artefact — even with a warm-up pass, the first batch of connections at
-low concurrency occasionally triggers class-loading or GC pauses that
-show up in the tail. This effect disappears at higher concurrency where
-JVM internals are already warmed up from the volume of prior requests.
+With a warm JVM the thread-pool server reaches its highest throughput at the lowest load, about 2,650 req/s at 10 clients, and settles around 1,600 req/s from 100 to 500 clients. Extra clients add queueing delay rather than throughput: p50 rises from 3 ms to 535 ms, in line with Little’s law (e.g. 500 / 1,601 ≈ 312 ms vs measured p50 309 ms). With 10 clients there are fewer connections than workers, so every request is served immediately; beyond 50 clients all workers are busy and connections queue. The decline in throughput is probably contention from context switching among 50 workers and up to 1,000 client threads sharing one machine, but we did not isolate the cause. At 1,000 clients 488 of 20,000 requests failed (2.4%). Each level is a single run, so differences of 15–20% are within noise.
 
 ---
 
