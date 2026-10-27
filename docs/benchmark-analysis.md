@@ -88,6 +88,19 @@ clients (258 / 525 / 551 ms).
 
 ## Event-Loop Comparison
 
+#Event loop latency
+
+| Clients | Requests | Successful | Errors | Requests/sec | p50 (ms) | p95 (ms) | p99 (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 200 | 200 | 0 | 405.07 | 18 | 48 | 114 |
+| 50 | 1,000 | 1,000 | 0 | 979.64 | 43 | 99 | 140 |
+| 100 | 2,000 | 2,000 | 0 | 2,222.00 | 40 | 71 | 89 |
+| 500 | 10,000 | 10,000 | 0 | 2,273.86 | 201 | 374 | 472 |
+| 1,000 | 20,000 | 20,000 | 0 | 3,580.72 | 254 | 489 | 579 |
+
+
+#Event loop  rps
+
 [TO COMPLETE before committing: generate the table from results/eventloop_rps.csv
 with the PowerShell one-liner, then write 3-4 sentences stating (a) where the
 event loop has higher throughput, (b) where its p50 and p99 are better or worse,
