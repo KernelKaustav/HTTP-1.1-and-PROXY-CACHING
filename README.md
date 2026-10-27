@@ -117,7 +117,7 @@ python scripts/plot_results.py
 - [x] Forward proxy + LRU cache (Cache-Control, no-store, no-cache, max-age)
 - [x] Benchmark harness — LoadTester, SweepRunner, plots
 - [x] ETag / If-Modified-Since / 304 conditional GET (proxy: `ConditionalGet`, `ETagGenerator`)
-- [ ] Cache hit-ratio experiment and plots
+- [x] Cache hit-ratio experiment and plots
 - [x] Event-loop benchmark runs (re-run with warm-up SweepRunner: see results/)
 
 ## Results (thread-pool model, pool size 50)
