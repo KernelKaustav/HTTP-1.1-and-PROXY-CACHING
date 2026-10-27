@@ -146,8 +146,44 @@ explanation. Each configuration was run once.
 
 ## Plots
 
-See `results/plots/`:
-- `rps_vs_concurrency.png` — throughput, both models and pool sizes
-- `p50_comparison.png`, `p95_comparison.png`, `p99_comparison.png` — latency percentiles
-- `latency_percentiles.png` — p50/p95/p99 per model
--  `threadpool_20_vs_50_latency.png` — latency comparison wrt 20 and 50 workers
+### Throughput
+
+Path: `results/plots/rps_vs_concurrency.png`
+
+![Throughput across concurrency levels](../results/plots/rps_vs_concurrency.png)
+
+### Median latency (p50)
+
+Path: `results/plots/p50_comparison.png`
+
+![p50 latency across concurrency levels](../results/plots/p50_comparison.png)
+
+### p95 latency
+
+Path: `results/plots/p95_comparison.png`
+
+![p95 latency across concurrency levels](../results/plots/p95_comparison.png)
+
+### Tail latency (p99)
+
+Path: `results/plots/p99_comparison.png`
+
+![p99 latency across concurrency levels](../results/plots/p99_comparison.png)
+
+### Latency percentile spread
+
+Path: `results/plots/latency_percentiles.png`
+
+![p50, p95 and p99 for the thread pool and event loop](../results/plots/latency_percentiles.png)
+
+### Thread-pool latency: 20 vs 50 workers
+
+Path: `results/plots/threadpool_20_vs_50_latency.png`
+
+![p50, p95 and p99 for 20-worker and 50-worker thread pools](../results/plots/threadpool_20_vs_50_latency.png)
+
+### Cache performance
+
+Path: `results/plots/cache.png`
+
+![Cache hit ratio and average response latency](../results/plots/cache.png)
