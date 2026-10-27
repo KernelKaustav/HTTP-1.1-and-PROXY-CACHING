@@ -76,13 +76,15 @@ explanation. Each configuration was run once.
 
 ---
 
-## Experiment 3: Latency percentile spread
+  ## Experiment 3: Latency percentile spread
 
-For pool size 50, p50, p95 and p99 stay close together up to 500 clients
-(309 / 320 / 324 ms), which indicates a deep, steady queue where almost every
-request waits about the same time. At 1,000 clients the spread widens
-(535 / 607 / 621 ms). With pool size 20 the spread is wider already at 500
-clients (258 / 525 / 551 ms).
+  For pool size 50, p50, p95 and p99 stay close together up to 500 clients
+  (309 / 320 / 324 ms), which indicates a deep, steady queue where almost every
+  request waits about the same time. At 1,000 clients the spread widens
+  (535 / 607 / 621 ms). With pool size 20 the spread is wider already at 500
+  clients (258 / 525 / 551 ms).
+
+![p50, p95 and p99 latency across concurrency levels for the 50-worker thread pool and event loop](../results/plots/latency_percentiles.png)
 
 ---
 
@@ -98,15 +100,20 @@ clients (258 / 525 / 551 ms).
 | 500 | 10,000 | 10,000 | 0 | 2,273.86 | 201 | 374 | 472 |
 | 1,000 | 20,000 | 20,000 | 0 | 3,580.72 | 254 | 489 | 579 |
 
+**Interpretation** -Compared with the 50-worker thread pool, the event loop had lower throughput at 10 and 50 clients, but higher throughput at 100, 500, and 1,000. Its p50 was worse at 10 and 50, then better at 100, 500, and 1,000. Its p99 was worse through 500 clients and slightly better at 1,000. The event loop had zero failed requests at every level; the pool had zero through 500 clients and 488 failures at 1,000.
 
 #Event loop  rps
 
-[TO COMPLETE before committing: generate the table from results/eventloop_rps.csv
-with the PowerShell one-liner, then write 3-4 sentences stating (a) where the
-event loop has higher throughput, (b) where its p50 and p99 are better or worse,
-(c) how many requests failed at each level, and (d) which machine ran it. Do not
-reuse the earlier event-loop numbers (408 / 975 / 2575 / 2056 / 3221 req/s): they
-came from a different method. Delete this bracket afterwards.]
+| Concurrency | Requests per client | Total requests | Successful | Errors | Requests/sec | p50 (ms) | p95 (ms) | p99 (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 20 | 200 | 200 | 0 | 411.78 | 23 | 39 | 43 |
+| 50 | 20 | 1,000 | 1,000 | 0 | 458.07 | 105 | 179 | 207 |
+| 100 | 20 | 2,000 | 2,000 | 0 | 522.26 | 184 | 320 | 363 |
+| 500 | 20 | 10,000 | 297 | 9,703 | 241.07 | 907 | 1,164 | 1,185 |
+| 1,000 | 20 | 20,000 | 331 | 19,669 | 183.97 | 1,467 | 1,734 | 1,756 |
+
+**Interpretation** -The event loop had lower throughput and worse p50 and p99 than the 50-worker pool at every level. It had zero failures at 10, 50, and 100 clients, then 9,703 failures out of 10,000 at 500 and 19,669 out of 20,000 at 1,000. The pool had zero failures through 500 clients and 488 at 1,000. The event-loop percentiles at high load describe only the few successful requests.
+
 
 ---
 
@@ -143,3 +150,4 @@ See `results/plots/`:
 - `rps_vs_concurrency.png` — throughput, both models and pool sizes
 - `p50_comparison.png`, `p95_comparison.png`, `p99_comparison.png` — latency percentiles
 - `latency_percentiles.png` — p50/p95/p99 per model
+-  `threadpool_20_vs_50_latency.png` — latency comparison wrt 20 and 50 workers
