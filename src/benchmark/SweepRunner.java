@@ -15,10 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 
 public class SweepRunner {
-   private static final int[] CONCURRENCY_LEVELS = {10, 50, 100};
-   private static final int REQUESTS_PER_CLIENT = 5;
-   private static final int GLOBAL_WARMUP_REQUESTS = 50;
-   private static final long COOLDOWN_MS = 1000;
+   private static final int[] CONCURRENCY_LEVELS = {10, 50, 100, 500, 1000};
+   private static final int REQUESTS_PER_CLIENT = 20;
+   private static final int GLOBAL_WARMUP_REQUESTS = 3000;
+   private static final long COOLDOWN_MS = 90_000;
 
         public static void main(String[] args) throws Exception {
         String host = args.length > 0 ? args[0] : "localhost";
