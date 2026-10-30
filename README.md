@@ -101,7 +101,7 @@ java -cp out server.ThreadPoolServer 9091 50
 
 # Event-loop server — port 8081, idle timeout 5 s, doc root test-site/
 # Bodies above 64 KB are sent chunked (HTTP/1.1 only; -1 disables chunking)
-java -Deventloop.chunk.threshold=65536 -cp out server.EventLoopServer 8081 5 test-site
+java "-Deventloop.chunk.threshold=65536" -cp out server.EventLoopServer 8081 5 test-site
 
 # Forward proxy — port 8082
 java -cp out proxy.ForwardProxy 8082
