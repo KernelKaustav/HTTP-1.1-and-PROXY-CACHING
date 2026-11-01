@@ -8,27 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Turns the bytes of one HTTP request head (request line + headers) into an
- * {@link HttpRequest}, or rejects them with a {@link MalformedRequestException}
- * that carries the status code the server must answer with.
- *
- * There are two entry points, one per concurrency model, but they share the
- * same validation helpers so both models answer identical bytes identically:
- *
- *   parse(InputStream)         thread-pool model: blocking socket, reads byte by byte
- *   parseFromHeadBytes(byte[]) event-loop model: the complete head is already in memory
- *
- * (RequestBuffer is the third caller: it finds the end of the head in a
- * non-blocking byte stream, then reuses parseStartLineText / addHeaderLine.)
- *
- * Status codes produced here:
- *   400  anything structurally wrong
- *   414  request line longer than MAX_REQUEST_LINE_LENGTH
- *   431  too many headers, or header bytes over MAX_TOTAL_HEADER_LENGTH
- *   505  HTTP version other than 1.0 / 1.1
- * Everything else (405, 404, 500, ...) is decided later, by the dispatcher/handlers.
- */
+
 public final class RequestParser {
 
     /** Longest accepted request line, in bytes. Longer -> 414 URI Too Long. */
@@ -42,9 +22,7 @@ public final class RequestParser {
         // static utility class: nothing to instantiate
     }
 
-    // ==================================================================
-    // Entry point 1: blocking stream (thread-pool model)
-    // ==================================================================
+   
 
     public static HttpRequest parse(InputStream in) throws IOException, MalformedRequestException {
         String requestLine = readLine(in, MAX_REQUEST_LINE_LENGTH, 414);
@@ -56,9 +34,6 @@ public final class RequestParser {
             throw new EOFException("no request line: connection closed");
         }
 
-        // RFC 7230 3.5: a server SHOULD ignore at least one empty line received
-        // before the request line (some old clients send a stray CRLF after a POST
-        // body). We skip exactly one; a second empty line is treated as garbage.
         if (requestLine.isEmpty()) {
             requestLine = readLine(in, MAX_REQUEST_LINE_LENGTH, 414);
             if (requestLine == null || requestLine.isEmpty()) {
@@ -73,14 +48,10 @@ public final class RequestParser {
                                 startLine.version, headers);
     }
 
-    // ==================================================================
-    // Request line
-    // ==================================================================
 
-    /** The three parts of "METHOD target HTTP-version". */
     static final class StartLine {
-        final HttpMethod method;       // null if the token is not a method we know
-        final String rawMethodToken;   // always kept, for error messages and tests
+        final HttpMethod method;       
+        final String rawMethodToken;   
         final String target;
         final String version;
 
@@ -92,19 +63,11 @@ public final class RequestParser {
         }
     }
 
-    /**
-     * Validates and splits one request line. Used by all three entry points.
-     * Every rule here exists for a reason; the reason is in the comment.
-     */
     static StartLine parseStartLineText(String requestLine) throws MalformedRequestException {
-        // Control characters (CR, LF, NUL, TAB, ...) have no place in a request line.
-        // A bare CR or NUL that survives into the target can be echoed into a response
-        // header or log line later (response splitting / log forging), so reject early.
+
         rejectControlChars(requestLine, false, "request line");
 
-        // Exactly one space between the three parts. split(" ", -1) keeps empty
-        // pieces, so "GET  /" (two spaces) becomes 4 parts and is rejected below
-        // instead of being silently "fixed", which would let two parsers disagree.
+
         String[] parts = requestLine.split(" ", -1);
         if (parts.length != 3) {
             throw new MalformedRequestException(
@@ -126,8 +89,7 @@ public final class RequestParser {
             throw new MalformedRequestException("invalid method token", 400);
         }
 
-        // Only HTTP/1.0 and HTTP/1.1 are spoken. Matching is case-sensitive on
-        // purpose: the RFC defines the version string as exactly "HTTP/1.1".
+
         if (!version.equals("HTTP/1.1") && !version.equals("HTTP/1.0")) {
             throw new MalformedRequestException("unsupported HTTP version: " + version, 505);
         }
