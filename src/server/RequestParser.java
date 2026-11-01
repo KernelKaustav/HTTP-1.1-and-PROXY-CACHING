@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-
 public final class RequestParser {
 
     /** Longest accepted request line, in bytes. Longer -> 414 URI Too Long. */
@@ -27,16 +26,12 @@ public final class RequestParser {
     public static HttpRequest parse(InputStream in) throws IOException, MalformedRequestException {
         String requestLine = readLine(in, MAX_REQUEST_LINE_LENGTH, 414);
 
-        // null means the peer closed before sending a single byte. That is not a
-        // protocol error (a keep-alive client simply hung up), so it is reported
-        // as EOF and the caller closes quietly instead of sending a 400.
+        
         if (requestLine == null) {
             throw new EOFException("no request line: connection closed");
         }
 
-        // RFC 7230 3.5: a server SHOULD ignore at least one empty line received
-        // before the request line (some old clients send a stray CRLF after a POST
-        // body). We skip exactly one; a second empty line is treated as garbage.
+        
         if (requestLine.isEmpty()) {
             requestLine = readLine(in, MAX_REQUEST_LINE_LENGTH, 414);
             if (requestLine == null || requestLine.isEmpty()) {
@@ -51,7 +46,7 @@ public final class RequestParser {
                                 startLine.version, headers);
     }
 
-
+    
 
     /** The three parts of "METHOD target HTTP-version". */
     static final class StartLine {
@@ -70,12 +65,12 @@ public final class RequestParser {
 
     
     static StartLine parseStartLineText(String requestLine) throws MalformedRequestException {
-        // Control characters (CR, LF, NUL, TAB, ...) have no place in a request line.
-        // A bare CR or NUL that survives into the target can be echoed into a response
-        // header or log line later (response splitting / log forging), so reject early.
+       
         rejectControlChars(requestLine, false, "request line");
 
-       
+        // Exactly one space between the three parts. split(" ", -1) keeps empty
+        // pieces, so "GET  /" (two spaces) becomes 4 parts and is rejected below
+        // instead of being silently "fixed", which would let two parsers disagree.
         String[] parts = requestLine.split(" ", -1);
         if (parts.length != 3) {
             throw new MalformedRequestException(
@@ -89,7 +84,6 @@ public final class RequestParser {
             throw new MalformedRequestException("empty method or target", 400);
         }
 
-        
         if (!isToken(methodToken)) {
             throw new MalformedRequestException("invalid method token", 400);
         }
@@ -105,30 +99,32 @@ public final class RequestParser {
     }
 
     static void addHeaderLine(String line, HttpHeaders headers) throws MalformedRequestException {
-        // A header line that starts with space/tab is "obsolete line folding"
-        // (a continuation of the previous header). RFC 7230 3.2.4 lets a server
-        // reject it, and accepting it is a request-smuggling risk because proxies
-        // disagree on how to unfold. We reject.
+        
         if (line.charAt(0) == ' ' || line.charAt(0) == '\t') {
             throw new MalformedRequestException(
                 "obsolete line folding is not supported", 400);
         }
 
-        // No colon, or a colon in position 0 (empty name) -> not a header.
+        
         int colon = line.indexOf(':');
         if (colon <= 0) {
             throw new MalformedRequestException("malformed header line: " + line, 400);
         }
+
+        
         String name = line.substring(0, colon);
         if (!isToken(name)) {
             throw new MalformedRequestException("invalid header name", 400);
         }
+
+        
         String rawValue = line.substring(colon + 1);
         rejectControlChars(rawValue, true, "header value");
 
         // Leading/trailing optional whitespace is not part of the value.
         headers.add(name, rawValue.trim());
     }
+
     public static HttpRequest parseFromHeadBytes(byte[] head) throws MalformedRequestException {
         String text = new String(head, StandardCharsets.ISO_8859_1);
         List<String> lines = splitLines(text);
@@ -138,6 +134,10 @@ public final class RequestParser {
         if (lines.size() <= first || lines.get(first).isEmpty()) {
             throw new MalformedRequestException("empty request line", 400);
         }
+
+        // The size limit must be checked here too: when a whole oversized head
+        // arrives in ONE read, the event loop has already seen the terminator and
+        // never runs its "head still incomplete, is it too big?" check.
         String requestLine = lines.get(first);
         if (requestLine.length() > MAX_REQUEST_LINE_LENGTH) {
             throw new MalformedRequestException("line exceeds " + MAX_REQUEST_LINE_LENGTH + " bytes", 414);
@@ -165,6 +165,7 @@ public final class RequestParser {
         return new HttpRequest(startLine.method, startLine.rawMethodToken, startLine.target,
                                 startLine.version, headers.asMap());
     }
+
     private static List<String> splitLines(String text) {
         List<String> lines = new ArrayList<>();
         int start = 0;
@@ -177,6 +178,9 @@ public final class RequestParser {
         }
         return lines;
     }
+
+    
+   
     private static Map<String, String> parseHeaders(InputStream in)
             throws IOException, MalformedRequestException {
         HttpHeaders headers = new HttpHeaders();
@@ -219,7 +223,8 @@ public final class RequestParser {
             sawAnyByte = true;
 
             if (b == '\r') {
-                
+                // CR is only legal as the first half of CRLF. Anything else
+                // (including EOF right after the CR) is a bare CR -> 400.
                 int next = in.read();
                 if (next == '\n') {
                     return line.toString();
@@ -239,10 +244,10 @@ public final class RequestParser {
             }
         }
 
-        
+        // End of stream: if bytes were read, hand back the unterminated final
+        // line so the caller decides (the head parsers then fail it as malformed).
         return sawAnyByte ? line.toString() : null;
     }
-
 
 
     /** Rejects ASCII control characters (and DEL). TAB may be allowed (header values only). */
