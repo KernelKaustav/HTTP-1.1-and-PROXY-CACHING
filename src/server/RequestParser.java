@@ -47,8 +47,6 @@ public final class RequestParser {
     }
 
     
-
-    /** The three parts of "METHOD target HTTP-version". */
     static final class StartLine {
         final HttpMethod method;       // null if the token is not a method we know
         final String rawMethodToken;   // always kept, for error messages and tests
@@ -68,9 +66,7 @@ public final class RequestParser {
        
         rejectControlChars(requestLine, false, "request line");
 
-        // Exactly one space between the three parts. split(" ", -1) keeps empty
-        // pieces, so "GET  /" (two spaces) becomes 4 parts and is rejected below
-        // instead of being silently "fixed", which would let two parsers disagree.
+    
         String[] parts = requestLine.split(" ", -1);
         if (parts.length != 3) {
             throw new MalformedRequestException(
@@ -88,8 +84,7 @@ public final class RequestParser {
             throw new MalformedRequestException("invalid method token", 400);
         }
 
-        // Only HTTP/1.0 and HTTP/1.1 are spoken. Matching is case-sensitive on
-        // purpose: the RFC defines the version string as exactly "HTTP/1.1".
+        
         if (!version.equals("HTTP/1.1") && !version.equals("HTTP/1.0")) {
             throw new MalformedRequestException("unsupported HTTP version: " + version, 505);
         }
@@ -135,9 +130,7 @@ public final class RequestParser {
             throw new MalformedRequestException("empty request line", 400);
         }
 
-        // The size limit must be checked here too: when a whole oversized head
-        // arrives in ONE read, the event loop has already seen the terminator and
-        // never runs its "head still incomplete, is it too big?" check.
+        
         String requestLine = lines.get(first);
         if (requestLine.length() > MAX_REQUEST_LINE_LENGTH) {
             throw new MalformedRequestException("line exceeds " + MAX_REQUEST_LINE_LENGTH + " bytes", 414);
@@ -237,20 +230,17 @@ public final class RequestParser {
 
             line.append((char) (b & 0xFF));
 
-            // Checked while reading, not afterwards, so a client that never sends
-            // a newline cannot make us buffer an unbounded amount.
+            
             if (line.length() > maxLength) {
                 throw new MalformedRequestException("line exceeds " + maxLength + " bytes", tooLongStatus);
             }
         }
 
-        // End of stream: if bytes were read, hand back the unterminated final
-        // line so the caller decides (the head parsers then fail it as malformed).
+        
         return sawAnyByte ? line.toString() : null;
     }
 
 
-    /** Rejects ASCII control characters (and DEL). TAB may be allowed (header values only). */
     private static void rejectControlChars(String s, boolean allowTab, String where)
             throws MalformedRequestException {
         for (int i = 0; i < s.length(); i++) {
