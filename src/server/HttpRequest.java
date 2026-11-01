@@ -4,19 +4,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Immutable, parsed representation of one HTTP request.
- *
- * This is deliberately a plain data holder: RequestParser builds it,
- * RequestHandler implementations consume it. Keeping it dumb means
- * every teammate can write against a stable shape while the parsing
- * and handling logic evolve independently.
- *
- * Body is not wired up yet (Week 1 scope is the request line + headers).
- * When Content-Length / chunked handling lands, add a `byte[] body` (or
- * an InputStream, for streaming) and a builder-style "withBody(...)"
- * rather than changing this constructor everywhere it's called.
- */
+
 public final class HttpRequest {
 
     private final HttpMethod method;

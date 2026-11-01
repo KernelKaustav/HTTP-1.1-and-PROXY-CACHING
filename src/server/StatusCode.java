@@ -1,17 +1,6 @@
 package server;
 
-/**
- * The HTTP status codes this server and proxy can emit, with their
- * RFC 7231 reason phrases, in one place.
- *
- * Before this enum, the code/phrase table existed twice
- * (HttpResponse.reasonPhraseFor and ResponseWriter.reasonFor) and the two
- * had drifted apart. Everything now resolves phrases through here.
- *
- * Callers that already pass plain ints (MalformedRequestException,
- * StaticFileHandler, ForwardProxy, ...) keep working unchanged:
- * HttpResponse.status(int) looks the int up with {@link #fromCode(int)}.
- */
+
 public enum StatusCode {
 
     OK(200, "OK"),

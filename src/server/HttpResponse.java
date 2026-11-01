@@ -10,25 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * A mutable HTTP/1.1 response: status line, headers, body.
- *
- * Existing callers (handlers, ForwardProxy, ChunkedWriter, KeepAliveManager,
- * ResponseWriter) use the fluent {@code status(int)}, {@code header(..)},
- * {@code addHeader(..)}, {@code body(..)}, {@code reasonPhrase(..)},
- * {@code statusCode()} and {@code writeTo(..)} methods; all of those keep
- * their signatures and behaviour. This version adds:
- *
- *  - {@link StatusCode} as the single source of reason phrases, plus a
- *    {@code status(StatusCode)} overload;
- *  - validation: status must be 100-599, and header names/values may not
- *    contain CR, LF or NUL (otherwise a header value built from user input
- *    could inject a second response - "response splitting");
- *  - factories for the error responses owned by the parsing layer:
- *    400, 404, 405 (with the mandatory Allow header), 414, 431,
- *    500 (internal server error) and 505 (version not supported);
- *  - read accessors so tests and other modules can inspect a response.
- */
+
 public final class HttpResponse {
 
     private int statusCode = 200;
@@ -39,20 +21,12 @@ public final class HttpResponse {
     private final Map<String, String> displayNames = new LinkedHashMap<>();
     private byte[] body = new byte[0];
 
-    // ------------------------------------------------------------------
-    // Factories
-    // ------------------------------------------------------------------
-
-    /** An empty response with the given status (no body, no Content-Length yet). */
+    
     public static HttpResponse of(StatusCode status) {
         return new HttpResponse().status(status);
     }
 
-    /**
-     * A small text/plain error response: "{@code message}\n" as the body, and
-     * "Connection: close" when the status means the stream can't be reused
-     * (400, 414, 431, ...). Use this for the 400/404/405/414/431 family.
-     */
+    
     public static HttpResponse error(StatusCode status, String message) {
         HttpResponse r = new HttpResponse()
                 .status(status)
@@ -98,11 +72,7 @@ public final class HttpResponse {
         return error(StatusCode.HTTP_VERSION_NOT_SUPPORTED, "HTTP Version Not Supported");
     }
 
-    /**
-     * Builds the right error response for a parse failure, using the status
-     * the parser chose (400 / 414 / 431 / 505 ...). Keeps the thread-pool and
-     * event-loop paths producing identical errors for identical input.
-     */
+    
     public static HttpResponse forMalformed(MalformedRequestException e) {
         StatusCode s = StatusCode.fromCode(e.statusCode());
         if (s == null) {
@@ -110,10 +80,6 @@ public final class HttpResponse {
         }
         return error(s, e.getMessage());
     }
-
-    // ------------------------------------------------------------------
-    // Builders (existing API)
-    // ------------------------------------------------------------------
 
     public HttpResponse status(int statusCode) {
         if (!StatusCode.isValid(statusCode)) {
@@ -142,7 +108,6 @@ public final class HttpResponse {
         return this;
     }
 
-    /** Sets a header, replacing any existing values for that name. */
     public HttpResponse header(String name, String value) {
         validate(name, value);
         String key = name.toLowerCase(Locale.ROOT);
@@ -153,7 +118,7 @@ public final class HttpResponse {
         return this;
     }
 
-    /** Appends a value for a header (for repeatable headers such as Set-Cookie). */
+    
     public HttpResponse addHeader(String name, String value) {
         validate(name, value);
         String key = name.toLowerCase(Locale.ROOT);
@@ -173,9 +138,7 @@ public final class HttpResponse {
         return body(body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8));
     }
 
-    // ------------------------------------------------------------------
-    // Accessors
-    // ------------------------------------------------------------------
+    
 
     public int statusCode() {
         return statusCode;
@@ -208,16 +171,7 @@ public final class HttpResponse {
         return body.clone();
     }
 
-    // ------------------------------------------------------------------
-    // Wire format
-    // ------------------------------------------------------------------
-
-    /**
-     * Writes the response to the given stream in wire format:
-     * status line, headers, blank line, body. Does not close the stream
-     * — the caller (server loop) owns the connection lifecycle, since a
-     * keep-alive connection may serve many responses.
-     */
+    
     public void writeTo(OutputStream out) throws IOException {
         StringBuilder head = new StringBuilder();
         head.append("HTTP/1.1 ").append(statusCode).append(' ')

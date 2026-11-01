@@ -10,22 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-/**
- * Fuzz tests: feed deliberately fragmented, oversized and garbage requests to
- * every parsing path and prove the parser survives.
- *
- * Paths under test (they must agree on status codes):
- *   stream           RequestParser.parse(InputStream)            thread-pool model
- *   headBytes        RequestParser.parseFromHeadBytes(byte[])    event-loop model
- *   buffer(whole)    RequestBuffer, all bytes in one append()
- *   buffer(trickle)  RequestBuffer, one byte per append()
- *
- * "Survives" means: the only things a path may do are return an HttpRequest,
- * throw MalformedRequestException with status 400/414/431/505, or (stream only)
- * hit EOF. Any other exception, a hang, or unbounded buffering is a FAIL.
- *
- * Plain Java, no JUnit. Run:  java -cp out ParserFuzzTest   [seed]
- */
+
 public class ParserFuzzTest {
 
     private static long seed = 20261015L;
@@ -38,9 +23,6 @@ public class ParserFuzzTest {
     private static int failed = 0;
     private static int randomFailuresShown = 0;
 
-    // ------------------------------------------------------------------
-    // Outcome of feeding bytes to one path
-    // ------------------------------------------------------------------
 
     private static final int OK = 0;
     private static final int INCOMPLETE = -1;
@@ -143,9 +125,6 @@ public class ParserFuzzTest {
         return o.status <= 0 || o.status == 400 || o.status == 414 || o.status == 431 || o.status == 505;
     }
 
-    // ------------------------------------------------------------------
-    // 1. Deterministic cases: every path must give the same answer
-    // ------------------------------------------------------------------
 
     private static final class Case {
         final String name;
@@ -326,9 +305,7 @@ public class ParserFuzzTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // 3. Fragmentation: any split of a valid request must still parse
-    // ------------------------------------------------------------------
+    
 
     private static void runFragmentationTests() {
         System.out.println("\n== Fragmentation ==");
@@ -471,9 +448,7 @@ public class ParserFuzzTest {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Helpers and main
-    // ------------------------------------------------------------------
+    
 
     private static byte[] latin1(String s) {
         return s.getBytes(StandardCharsets.ISO_8859_1);

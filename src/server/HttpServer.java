@@ -7,24 +7,6 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-/**
- * Week 1 skeleton: a TCP accept loop that parses one request per
- * connection and writes a response, using RequestParser + RequestHandler.
- *
- * Deliberately single-threaded and single-request-per-connection for now
- * — that's next weeks' work (thread pool, event loop, keep-alive loop
- * per connection). The point of this class right now is to prove the
- * parsing pipeline works end-to-end over a real socket, so the rest of
- * the team can build against a working RequestHandler contract.
- *
- * TODO (later weeks, tracked in README status list):
- *  - loop over multiple requests per connection when isKeepAlive() is true
- *  - swap this single-threaded accept loop for a thread pool AND an
- *    event-loop implementation, benchmark both
- *  - read the request body (Content-Length / chunked) before responding
- *  - wire in real handlers (static file serving, proxy mode) instead of
- *    the placeholder EchoHandler below
- */
 public final class HttpServer {
 
     public static void main(String[] args) throws IOException {
@@ -77,13 +59,6 @@ public final class HttpServer {
             System.err.println("Connection error: " + e.getMessage());
         }
     }
-
-    /**
-     * Trivial placeholder handler so the pipeline is runnable and
-     * testable this week. Echoes back what was parsed instead of doing
-     * anything with the filesystem or a proxy. Real handlers (static
-     * file serving, forward proxy) replace/extend this.
-     */
     private static final class EchoHandler implements RequestHandler {
         @Override
         public HttpResponse handle(HttpRequest request) {

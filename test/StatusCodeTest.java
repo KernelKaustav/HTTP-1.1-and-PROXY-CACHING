@@ -15,18 +15,7 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.Locale;
 
-/**
- * Tests for StatusCode + HttpResponse (7 Oct work item), in two layers:
- *
- *  1. Unit tests: reason phrases, validation, wire format, error factories.
- *  2. End-to-end: starts BOTH concurrency models on free ports with the real
- *     StaticFileHandler and checks 200/400/404/405/414/431/505 over raw sockets,
- *     so any difference between the thread-pool and event-loop paths shows up.
- *
- * Run from the repo root:
- *   javac -d out $(find src test -name "*.java")
- *   java -cp out StatusCodeTest
- */
+
 public class StatusCodeTest {
 
     private static int failures = 0;
@@ -48,9 +37,7 @@ public class StatusCodeTest {
         System.out.println("\nAll status code tests passed.");
     }
 
-    // ------------------------------------------------------------------
-    // 1. Unit tests
-    // ------------------------------------------------------------------
+
 
     private static String wire(HttpResponse r) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -171,9 +158,7 @@ public class StatusCodeTest {
         return true;
     }
 
-    // ------------------------------------------------------------------
-    // 2. End-to-end over real sockets, both concurrency models
-    // ------------------------------------------------------------------
+    
 
     private static void endToEnd() throws Exception {
         Path root = Files.createTempDirectory("status-test-");
