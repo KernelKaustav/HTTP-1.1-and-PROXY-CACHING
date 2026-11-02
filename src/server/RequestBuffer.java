@@ -113,7 +113,7 @@ public final class RequestBuffer {
         return -1;
     }
 
-    /** Splits a head (which ends in CRLF) into lines, without the CRLFs. */
+    
     private List<String> splitOnCrlf(String block) {
         List<String> lines = new ArrayList<>();
         int start = 0;
