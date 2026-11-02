@@ -244,10 +244,7 @@ public class ParserFuzzTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // 2. Incomplete input and unbounded-buffering guards
-    // ------------------------------------------------------------------
-
+    
     private static void runIncompleteAndLimitTests() {
         System.out.println("\n== Incomplete input and buffering limits ==");
 
