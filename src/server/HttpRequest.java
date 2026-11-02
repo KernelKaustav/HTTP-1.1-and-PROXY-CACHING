@@ -4,9 +4,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-
 public final class HttpRequest {
-
     private final HttpMethod method;
     private final String rawMethodToken; // preserved even if method == null, for error messages
     private final String target;         // request-target, e.g. "/index.html?x=1"
@@ -25,19 +23,15 @@ public final class HttpRequest {
         
         this.headers = Collections.unmodifiableMap(new LinkedHashMap<>(headers));
     }
-
     public HttpMethod method() {
         return method;
     }
-
     public String rawMethodToken() {
         return rawMethodToken;
     }
-
     public String target() {
         return target;
     }
-
     public String httpVersion() {
         return httpVersion;
     }
