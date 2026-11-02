@@ -34,11 +34,7 @@ public final class RequestBuffer {
         return findHeaderBlockEnd() >= 0;
     }
 
-    /**
-     * Parses and removes exactly one complete request from the front of the
-     * buffer. Call only after hasCompleteRequest() returned true. Leftover
-     * bytes (the next pipelined request, whole or partial) stay buffered.
-     */
+    
     public HttpRequest extractRequest() throws MalformedRequestException {
         int blockEnd = findHeaderBlockEnd();
         if (blockEnd < 0) {
