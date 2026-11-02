@@ -1,6 +1,4 @@
 package server;
-
-
 public enum HttpMethod {
     GET,
     HEAD,
@@ -10,9 +8,7 @@ public enum HttpMethod {
     CONNECT,
     OPTIONS,
     TRACE,
-    PATCH;
-
-    
+    PATCH; 
     public static HttpMethod fromToken(String token) {
         try {
             return HttpMethod.valueOf(token);
