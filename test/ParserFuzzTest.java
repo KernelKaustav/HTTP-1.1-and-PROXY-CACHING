@@ -348,9 +348,7 @@ public class ParserFuzzTest {
         report("2000 random chunkings of a valid request parse", randomOk, " " + bad);
     }
 
-    // ------------------------------------------------------------------
-    // 4. Random garbage / mutation fuzzing
-    // ------------------------------------------------------------------
+    
 
     private static void runRandomFuzz() {
         System.out.println("\n== Random fuzzing (" + RANDOM_ITERATIONS + " inputs, seed " + seed + ") ==");
