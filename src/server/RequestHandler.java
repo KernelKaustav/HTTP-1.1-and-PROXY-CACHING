@@ -6,15 +6,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 
-
 public interface RequestHandler {
 
     HttpResponse handle(HttpRequest request) throws IOException;
-
     default void handle(Socket socket) throws IOException {
         InputStream in = socket.getInputStream();
         OutputStream out = socket.getOutputStream();
-
         HttpRequest request;
         try {
             request = RequestParser.parse(in);
@@ -28,7 +25,6 @@ public interface RequestHandler {
                 .writeTo(out);
             return;
         }
-
         HttpResponse response;
         try {
             response = handle(request);
