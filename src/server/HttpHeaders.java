@@ -9,11 +9,7 @@ public final class HttpHeaders {
 
     private final Map<String, String> byLowerName = new LinkedHashMap<>();
 
-    /**
-     * Adds a header value. If a header with this name (case-insensitive)
-     * already exists, the new value is appended to the existing one with
-     * ", " per RFC 7230 §3.2.2, rather than overwriting it.
-     */
+    
     public void add(String name, String value) {
         String key = name.toLowerCase();
         String existing = byLowerName.get(key);
