@@ -22,8 +22,7 @@ public final class HttpRequest {
         this.rawMethodToken = rawMethodToken;
         this.target = target;
         this.httpVersion = httpVersion;
-        // Defensive copy + unmodifiable: nobody downstream should mutate
-        // a parsed request out from under another handler.
+        
         this.headers = Collections.unmodifiableMap(new LinkedHashMap<>(headers));
     }
 
