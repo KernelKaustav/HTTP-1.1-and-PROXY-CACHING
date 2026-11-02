@@ -35,12 +35,9 @@ public final class HttpRequest {
     public String httpVersion() {
         return httpVersion;
     }
-
     public Map<String, String> headers() {
         return headers;
     }
-
-    /** Case-insensitive header lookup (header names must be case-insensitive per RFC 7230). */
     public String header(String name) {
         return headers.get(name.toLowerCase());
     }
