@@ -94,7 +94,7 @@ public final class HttpResponse {
         return this;
     }
 
-    /** Overrides the default phrase for the status; null restores the default. */
+    
     public HttpResponse reasonPhrase(String reasonPhrase) {
         if (reasonPhrase != null) {
             for (int i = 0; i < reasonPhrase.length(); i++) {
