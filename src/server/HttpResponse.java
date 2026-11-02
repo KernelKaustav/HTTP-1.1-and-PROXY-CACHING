@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-
 public final class HttpResponse {
 
     private int statusCode = 200;
@@ -21,12 +20,10 @@ public final class HttpResponse {
     private final Map<String, String> displayNames = new LinkedHashMap<>();
     private byte[] body = new byte[0];
 
-    
     public static HttpResponse of(StatusCode status) {
         return new HttpResponse().status(status);
     }
 
-    
     public static HttpResponse error(StatusCode status, String message) {
         HttpResponse r = new HttpResponse()
                 .status(status)
@@ -48,7 +45,6 @@ public final class HttpResponse {
         return error(StatusCode.NOT_FOUND, "Not Found");
     }
 
-    /** RFC 7231 §6.5.5: a 405 MUST list the supported methods in Allow. */
     public static HttpResponse methodNotAllowed(String allow) {
         return error(StatusCode.METHOD_NOT_ALLOWED, "Method Not Allowed").header("Allow", allow);
     }
@@ -94,7 +90,6 @@ public final class HttpResponse {
         return this;
     }
 
-    
     public HttpResponse reasonPhrase(String reasonPhrase) {
         if (reasonPhrase != null) {
             for (int i = 0; i < reasonPhrase.length(); i++) {
@@ -127,7 +122,7 @@ public final class HttpResponse {
         return this;
     }
 
-    /** Sets the body and a matching Content-Length (UTF-8 bytes for the String overload). */
+    
     public HttpResponse body(byte[] body) {
         this.body = (body == null) ? new byte[0] : body;
         header("Content-Length", String.valueOf(this.body.length));
