@@ -17,8 +17,7 @@ public final class HttpServer {
             System.out.println("Listening on port " + port);
             while (true) {
                 Socket connection = serverSocket.accept();
-                // TODO: hand off to a worker (thread pool / event loop)
-                // instead of handling inline on the accept thread.
+                
                 handleConnection(connection, handler);
             }
         }
