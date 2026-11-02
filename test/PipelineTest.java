@@ -14,13 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-/**
- * Pipelining tests: several requests arriving back to back (in one read, or
- * smeared across arbitrary fragments) must each be extracted exactly once, in
- * order, and each must get its own correct response.
- *
- * Plain Java, no JUnit. Run:  java -cp out PipelineTest
- */
+
 public class PipelineTest {
 
     private static int passed = 0;
