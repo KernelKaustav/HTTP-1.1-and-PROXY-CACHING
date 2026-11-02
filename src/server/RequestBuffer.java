@@ -132,7 +132,7 @@ public final class RequestBuffer {
             System.arraycopy(buf, n, buf, 0, remaining);
         }
         len = remaining;
-        searchFrom = 0; // the next request starts its terminator scan from scratch
+        searchFrom = 0; 
     }
 
     private void ensureCapacity(int needed) {
